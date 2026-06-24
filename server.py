@@ -143,6 +143,7 @@ async def handle_list_tools() -> list[Tool]:
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
+                    "deadline": {"type": "integer", "default": 30, "description": "Max seconds to wait for sources (default 30, max 120)"},
                 },
                 "required": ["query"],
             },
@@ -743,7 +744,31 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(_tavily())
             task_names.append("tavily")
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            deadline = min(int(arguments.get("deadline", 30)), 120)
+
+            async def _gather_with_deadline(tks, names, dl):
+                sem = asyncio.Semaphore(15)
+                async def _run(task):
+                    async with sem:
+                        return await task
+                wrapped = [_run(t) for t in tks]
+                done, pending = await asyncio.wait(wrapped, timeout=dl, return_when=asyncio.FIRST_COMPLETED)
+                for p in pending:
+                    p.cancel()
+                res = {}
+                for n, w in zip(names, wrapped):
+                    if w in done:
+                        try:
+                            res[n] = w.result()
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception as e:
+                            res[n] = e
+                    else:
+                        res[n] = asyncio.TimeoutError(f"{n} exceeded deadline")
+                return res
+
+            results = await _gather_with_deadline(tasks, task_names, deadline)
             merged: dict[str, Any] = {}
             flat_items: list[dict] = []
             for name_, result in zip(task_names, results):
