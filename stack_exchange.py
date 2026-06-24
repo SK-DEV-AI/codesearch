@@ -146,7 +146,8 @@ async def so_tags_info(tags: str, site: str = "stackoverflow") -> dict:
         params: dict[str, Any] = {"site": site}
         tag = urllib.parse.quote(tags)
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{SO_API}/tags/{tag}/info", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+            r = await c.get(f"{SO_API}/tags/{tag}/info", params=params,
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /tags/info: {r.status_code}"}
         data = r.json()

@@ -179,7 +179,7 @@ async def get_paper_references(paper_id: str, limit: int = 20) -> dict:
 async def get_paper_recommendations(paper_id: str, limit: int = 10) -> dict:
     try:
         params: dict[str, Any] = {"fields": FIELDS, "limit": min(limit, 100)}
-        r = await _s2_post(f"{S2_RECOMMENDATIONS}/{paper_id}", {}, params=params, timeout=20)
+        r = await _s2_post(S2_RECOMMENDATIONS, {"paperId": paper_id}, params=params, timeout=20)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 recommendations: {r.status_code} {r.text[:200]}"}
         data = r.json()

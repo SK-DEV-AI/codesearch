@@ -65,11 +65,11 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
             query_parts.append(f"created:{created}")
         if pushed and search_type == "repos":
             query_parts.append(f"pushed:{pushed}")
-        if stars:
+        if stars and search_type in ("repos", "issues"):
             query_parts.append(f"stars:{stars}")
-        if forks:
+        if forks and search_type == "repos":
             query_parts.append(f"forks:{forks}")
-        if topics:
+        if topics and search_type == "repos":
             query_parts.append(f"topics:{topics}")
         if state and search_type == "issues":
             query_parts.append(f"state:{state}")
