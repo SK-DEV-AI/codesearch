@@ -15,6 +15,10 @@ CRATES_API = "https://crates.io/api/v1"
 async def search_package(name: str, registry: str = "auto", type: str = "") -> dict:
     if type == "npm_dist_tags":
         return await _npm_dist_tags(name)
+    if type == "npm_versions":
+        return await get_npm_versions(name)
+    if type == "npm_time":
+        return await get_npm_time(name)
     if type == "crates_downloads":
         return await _crates_downloads(name)
     if type == "crates_reverse_deps":
@@ -25,6 +29,8 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
         return await _crates_categories()
     if type == "crates_keywords":
         return await _crates_keywords()
+    if type == "crates_versions":
+        return await get_crates_versions(name)
     registries_to_try = []
     if registry == "auto":
         registries_to_try = list(REGISTRIES.items())
@@ -76,6 +82,8 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
                     "python_versions": info.get("requires_python", ""),
                     "classifiers": info.get("classifiers", [])[:10],
                     "project_urls": info.get("project_urls", {}),
+                    "yanked": info.get("yanked", False),
+                    "yanked_reason": info.get("yanked_reason", ""),
                 }
                 try:
                     async with httpx.AsyncClient(timeout=5) as dls_c:
@@ -166,6 +174,89 @@ async def _npm_dist_tags(name: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def get_npm_versions(name: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"npm versions: {r.status_code}"}
+        data = r.json()
+        versions = sorted(data.get("versions", {}).keys())
+        return {"success": True, "name": name, "versions": versions, "total": len(versions)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_npm_time(name: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"npm time: {r.status_code}"}
+        data = r.json()
+        time_data = data.get("time", {})
+        return {"success": True, "name": name, "time": time_data}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_npm_version(name: str, version: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"npm version: {r.status_code}"}
+        data = r.json()
+        return {"success": True, "name": data.get("name", name), "version": data.get("version", version),
+                "description": data.get("description", ""),
+                "dependencies": list(data.get("dependencies", {}).keys())[:20]}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_crates_versions(name: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
+                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"crates versions: {r.status_code}"}
+        data = r.json()
+        versions = []
+        for v in (data.get("versions", []) or [])[:50]:
+            versions.append({
+                "num": v.get("num", ""),
+                "created_at": v.get("created_at", ""),
+                "downloads": v.get("downloads", 0),
+                "yanked": v.get("yanked", False),
+            })
+        return {"success": True, "name": name, "versions": versions, "total": len(versions)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_pypi_version(name: str, version: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"PyPI version: {r.status_code}"}
+        data = r.json()
+        info = data.get("info", {})
+        return {"success": True, "name": info.get("name", name), "version": info.get("version", version),
+                "summary": info.get("summary", ""),
+                "license": info.get("license", ""),
+                "requires_python": info.get("requires_python", ""),
+                "yanked": info.get("yanked", False),
+                "yanked_reason": info.get("yanked_reason", "")}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def crates_search(query: str, count: int = 10,
                         sort: str = "", keywords: str = "", categories: str = "",
                         type: str = "search", name: str = "") -> dict:
@@ -179,6 +270,8 @@ async def crates_search(query: str, count: int = 10,
         return await _crates_categories()
     if type == "keywords":
         return await _crates_keywords()
+    if type == "versions":
+        return await get_crates_versions(name)
     try:
         params: dict[str, Any] = {"per_page": min(count, 100)}
         if query:

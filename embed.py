@@ -7,25 +7,14 @@ from collections import Counter, defaultdict
 
 import httpx
 
-from config import NV_BASE, NV_EMBED_MODEL, NV_KEY, _cached, _set_cache
+from config import NV_BASE, NV_EMBED_MODEL, NV_KEY, _cached, _set_cache, _KeyRotator
 
-_NV_KEYS: list[str] = [k.strip() for k in NV_KEY.split(",") if k.strip()] if NV_KEY else []
-_nv_idx = 0
-_NV_LOCK = asyncio.Lock()
-
-
-async def _next_nv_key() -> str:
-    global _nv_idx
-    if not _NV_KEYS:
-        raise RuntimeError("no NV_KEY configured")
-    async with _NV_LOCK:
-        k = _NV_KEYS[_nv_idx % len(_NV_KEYS)]
-        _nv_idx = (_nv_idx + 1) % len(_NV_KEYS)
-        return k
+_nv_rotator = _KeyRotator("NV_KEY")
+_next_nv_key = _nv_rotator.next
 
 
 async def _embed(texts: list[str], input_type: str = "passage") -> list[list[float]] | None:
-    if not _NV_KEYS:
+    if not _nv_rotator.has_keys:
         return None
     results: list[list[float] | None] = [None] * len(texts)
     uncached = []
@@ -109,7 +98,7 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _bm25_score(query_tokens: list[str], doc_tokens: list[str], doc_len: int, avg_dl: float, idf_cache: dict[str, float]) -> float:
-    doc_freq: Counter[str, int] = Counter(doc_tokens)
+    doc_freq: Counter[str] = Counter(doc_tokens)
     score = 0.0
     for qt in set(query_tokens):
         tf = doc_freq.get(qt, 0)

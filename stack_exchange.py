@@ -9,12 +9,12 @@ import httpx
 from config import SO_API, _cached, _set_cache
 
 
-async def _fetch_accepted_answer(c: httpx.AsyncClient, accepted_id: int, site: str) -> str:
-    """Fetch a single accepted answer body."""
+async def _fetch_accepted_answer(accepted_id: int, site: str) -> str:
     try:
-        ar = await c.get(f"{SO_API}/answers/{accepted_id}", params={
-            "order": "desc", "sort": "votes", "site": site, "pagesize": 1, "filter": "withbody"
-        }, headers={"User-Agent": "mcp-codesearch/1.0"})
+        async with httpx.AsyncClient(timeout=10) as c:
+            ar = await c.get(f"{SO_API}/answers/{accepted_id}", params={
+                "order": "desc", "sort": "votes", "site": site, "pagesize": 1, "filter": "withbody"
+            }, headers={"User-Agent": "mcp-codesearch/1.0"})
         if ar.status_code == 200:
             adata = ar.json()
             if adata.get("items"):
@@ -30,7 +30,7 @@ async def search_so(query: str, count: int = 5, tags: str = "",
                     sort: str = "relevance", views: int = 0,
                     answers: int = 0, type: str = "search",
                     site: str = "stackoverflow", question_id: int = 0,
-                    page: int = 1) -> dict:
+                    page: int = 1, filter: str = "") -> dict:
     if type == "excerpts":
         return await _so_search_excerpts(query, count, tags, site)
     if type == "faq":
@@ -43,7 +43,7 @@ async def search_so(query: str, count: int = 5, tags: str = "",
         return await so_tags_info(tags, site)
     if type == "tags_wikis":
         return await so_tags_wikis(tags, count, site)
-    cache_key = f"so:{query}:{tags}:{count}:{accepted}:{fromdate}:{todate}:{closed}:{sort}:{views}:{answers}:{type}:{site}"
+    cache_key = f"so:{query}:{tags}:{count}:{accepted}:{fromdate}:{todate}:{closed}:{sort}:{views}:{answers}:{type}:{site}:{filter}"
     cached = _cached(cache_key)
     if cached is not None:
         return cached
@@ -51,7 +51,7 @@ async def search_so(query: str, count: int = 5, tags: str = "",
         params: dict[str, Any] = {
             "order": "desc", "sort": sort, "q": query,
             "site": site, "pagesize": min(count, 50),
-            "filter": "withbody",
+            "filter": filter if filter else "withbody",
         }
         if tags:
             params["tagged"] = tags
@@ -76,14 +76,13 @@ async def search_so(query: str, count: int = 5, tags: str = "",
             data = r.json()
             items = data.get("items", [])[:count]
 
-            # Batch fetch accepted answers concurrently
             accepted_ids = [item.get("accepted_answer_id") for item in items]
             accepted_answers = {}
             fetch_tasks = []
             fetch_ids = []
             for aid in accepted_ids:
                 if aid:
-                    fetch_tasks.append(_fetch_accepted_answer(c, aid, site))
+                    fetch_tasks.append(_fetch_accepted_answer(aid, site))
                     fetch_ids.append(aid)
             if fetch_tasks:
                 results_fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -266,6 +265,102 @@ async def _so_question_answers(question_id: int, count: int = 5, site: str = "st
                 "is_accepted": item.get("is_accepted", False),
                 "body": (item.get("body", "") or "")[:2000],
                 "url": item.get("link", ""),
+            })
+        return {"success": True, "results": results, "total": data.get("total", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_questions_by_ids(ids: list[int], site: str = "stackoverflow") -> dict:
+    try:
+        ids_str = ";".join(str(i) for i in ids[:30])
+        params: dict[str, Any] = {"site": site, "filter": "withbody"}
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{SO_API}/questions/{ids_str}", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"StackExchange /questions: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in data.get("items", [])[:len(ids)]:
+            results.append({
+                "question_id": item.get("question_id", 0),
+                "title": item.get("title", ""),
+                "score": item.get("score", 0),
+                "answer_count": item.get("answer_count", 0),
+                "tags": item.get("tags", []),
+                "url": item.get("link", ""),
+                "body": (item.get("body", "") or "")[:1000],
+                "creation_date": item.get("creation_date", 0),
+                "view_count": item.get("view_count", 0),
+            })
+        return {"success": True, "results": results, "total": data.get("total", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def search_users(query: str, site: str = "stackoverflow", count: int = 10) -> dict:
+    try:
+        params: dict[str, Any] = {"site": site, "inname": query, "pagesize": min(count, 50)}
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{SO_API}/users", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"StackExchange /users: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in data.get("items", [])[:count]:
+            results.append({
+                "user_id": item.get("user_id", 0),
+                "display_name": item.get("display_name", ""),
+                "reputation": item.get("reputation", 0),
+                "accept_rate": item.get("accept_rate", 0),
+                "profile_url": item.get("link", ""),
+                "location": item.get("location", ""),
+                "website_url": item.get("website_url", ""),
+            })
+        return {"success": True, "results": results, "total": data.get("total", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def search_tags(query: str, site: str = "stackoverflow", count: int = 10) -> dict:
+    try:
+        params: dict[str, Any] = {"site": site, "inname": query, "pagesize": min(count, 50)}
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{SO_API}/tags", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"StackExchange /tags: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in data.get("items", [])[:count]:
+            results.append({
+                "name": item.get("name", ""),
+                "has_synonyms": item.get("has_synonyms", False),
+                "is_moderator_only": item.get("is_moderator_only", False),
+                "is_required": item.get("is_required", False),
+                "count": item.get("count", 0),
+            })
+        return {"success": True, "results": results, "total": data.get("total", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_question_comments(question_id: int, site: str = "stackoverflow", count: int = 20) -> dict:
+    try:
+        params: dict[str, Any] = {"site": site, "pagesize": min(count, 50), "filter": "withbody"}
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{SO_API}/questions/{question_id}/comments", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"StackExchange /questions/comments: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in data.get("items", [])[:count]:
+            results.append({
+                "comment_id": item.get("comment_id", 0),
+                "score": item.get("score", 0),
+                "body": (item.get("body", "") or "")[:1000],
+                "url": item.get("link", ""),
+                "creation_date": item.get("creation_date", 0),
+                "user_name": item.get("user", {}).get("display_name", ""),
             })
         return {"success": True, "results": results, "total": data.get("total", len(results))}
     except (httpx.HTTPError, ValueError) as e:

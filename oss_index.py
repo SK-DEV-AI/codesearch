@@ -125,3 +125,91 @@ async def get_component_latest_version(purl: str) -> dict:
         return {"success": True, "result": result}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def search_vulnerabilities(keyword: str, limit: int = 10) -> dict:
+    if not OSS_TOKEN:
+        return {"success": False, "error": "OSS_TOKEN not configured"}
+    oss_key = await _next_oss_key()
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{GUIDE_API}/security-data/packages",
+                            params={"q": keyword, "limit": min(limit, 50)},
+                            headers={"Authorization": f"Bearer {oss_key}"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Guide security-data: {r.status_code}"}
+        data = r.json()
+        results = []
+        for pkg in (data if isinstance(data, list) else [])[:limit]:
+            results.append({
+                "coordinates": pkg.get("coordinates", ""),
+                "package_name": pkg.get("package", {}).get("name", ""),
+                "ecosystem": pkg.get("package", {}).get("ecosystem", ""),
+                "latest_version": pkg.get("latestVersion", ""),
+            })
+        return {"success": True, "results": results, "total": len(results)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def analyze_license(purl: str) -> dict:
+    if not OSS_TOKEN:
+        return {"success": False, "error": "OSS_TOKEN not configured"}
+    oss_key = await _next_oss_key()
+    if not purl:
+        return {"success": False, "error": "purl required"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(f"{GUIDE_API}/license-analysis",
+                             json={"purls": [purl]},
+                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Guide license-analysis: {r.status_code}"}
+        data = r.json()
+        results = []
+        for comp in (data if isinstance(data, list) else []):
+            results.append({
+                "coordinates": comp.get("coordinates", ""),
+                "licenses": comp.get("licenses", []),
+                "declared_license": comp.get("declaredLicense", ""),
+                "observed_license": comp.get("observedLicense", ""),
+                "license_score": comp.get("licenseScore", 0),
+            })
+        return {"success": True, "results": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def quick_component_report(purl: str) -> dict:
+    if not OSS_TOKEN:
+        return {"success": False, "error": "OSS_TOKEN not configured"}
+    oss_key = await _next_oss_key()
+    if not purl:
+        return {"success": False, "error": "purl required"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(f"{OSS_API}/quick",
+                             json={"coordinates": [purl]},
+                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Guide component-report/quick: {r.status_code}"}
+        data = r.json()
+        reports = []
+        for comp in (data if isinstance(data, list) else []):
+            vulnerabilities = []
+            for vuln in comp.get("vulnerabilities", []):
+                vulnerabilities.append({
+                    "id": vuln.get("id", ""),
+                    "title": vuln.get("title", ""),
+                    "cvss_score": vuln.get("cvssScore", 0),
+                    "severity": vuln.get("severity", "unknown"),
+                })
+            reports.append({
+                "coordinates": comp.get("coordinates", ""),
+                "vulnerability_count": len(vulnerabilities),
+                "vulnerabilities": vulnerabilities,
+                "licenses": comp.get("licenses", ""),
+            })
+        return {"success": True, "reports": reports}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}

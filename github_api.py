@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
 import httpx
 
 from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key
+
+logger = logging.getLogger("codesearch.github")
 
 
 async def _gh_headers(media_type: str = "github+json") -> dict[str, str]:
@@ -23,10 +26,13 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
                         path: str = "", created: str = "",
                         state: str = "", labels: str = "",
                         user: str = "", org: str = "",
-                        size: str = "", in_name: str = "",
+                        size: str = "", in_qualifier: str = "",
                         is_: str = "", pushed: str = "",
                         stars: str = "", forks: str = "",
-                        topics: str = "", page: int = 1) -> dict:
+                        topics: str = "", page: int = 1,
+                        exclude_qualifier: str = "",
+                        merged: str = "", head: str = "", base: str = "",
+                        review: str = "") -> dict:
     cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}"
     cached = _cached(cache_key)
     if cached is not None:
@@ -51,8 +57,8 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
             query_parts.append(f"path:{path}")
         if size:
             query_parts.append(f"size:{size}")
-        if in_name:
-            query_parts.append(f"in:name")
+        if in_qualifier:
+            query_parts.append(f"in:{in_qualifier}")
         if is_:
             query_parts.append(f"is:{is_}")
         if created and search_type == "issues":
@@ -70,6 +76,16 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
         if labels and search_type == "issues":
             for lbl in labels.split(","):
                 query_parts.append(f"label:{lbl.strip()}")
+        if merged and search_type == "issues":
+            query_parts.append(f"merged:{merged}")
+        if head:
+            query_parts.append(f"head:{head}")
+        if base:
+            query_parts.append(f"base:{base}")
+        if review and search_type == "issues":
+            query_parts.append(f"review:{review}")
+        if exclude_qualifier:
+            query_parts.append(f"NOT {exclude_qualifier}")
         full_query = " ".join(query_parts)
         if search_type == "repos":
             url = GH_SEARCH_REPOS
@@ -88,6 +104,14 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
             params["order"] = order
         mt = "github.v3.text-match+json" if search_type == "code" else "github+json"
         r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
+        remaining = r.headers.get("x-ratelimit-remaining")
+        if remaining is not None:
+            try:
+                remaining_int = int(remaining)
+                if remaining_int < 10:
+                    logger.warning("GitHub API rate limit low: %s remaining", remaining_int)
+            except (ValueError, TypeError):
+                pass
         if r.status_code != 200:
             return {"success": False, "error": f"GitHub API: {r.status_code} {r.text[:200]}"}
         data = r.json()

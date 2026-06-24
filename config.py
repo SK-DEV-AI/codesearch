@@ -7,27 +7,40 @@ from typing import Any
 
 import httpx
 
+
+class _KeyRotator:
+    """Thread-safe round-robin key rotator for API keys."""
+
+    def __init__(self, env_var: str, fallback_var: str = ""):
+        raw = os.environ.get(env_var, os.environ.get(fallback_var, "")) if fallback_var else os.environ.get(env_var, "")
+        self._keys: list[str] = [k.strip() for k in raw.split(",") if k.strip()] if raw else []
+        self._idx = 0
+        self._lock = asyncio.Lock()
+
+    async def next(self) -> str | None:
+        if not self._keys:
+            return None
+        async with self._lock:
+            k = self._keys[self._idx % len(self._keys)]
+            self._idx = (self._idx + 1) % len(self._keys)
+            return k
+
+    @property
+    def first(self) -> str:
+        return self._keys[0] if self._keys else ""
+
+    @property
+    def has_keys(self) -> bool:
+        return bool(self._keys)
+
 CONTEXT7_API_KEY = os.environ.get("CONTEXT7_API_KEY", "")
 CONTEXT7_SEARCH = "https://context7.com/api/v2/libs/search"
 CONTEXT7_CONTEXT = "https://context7.com/api/v2/context"
 DEEPWIKI_MCP = "https://mcp.deepwiki.com/mcp"
-_raw_gh = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-_GH_KEYS = [k.strip() for k in _raw_gh.split(",") if k.strip()] if _raw_gh else []
-_gh_idx = 0
-_GH_LOCK = asyncio.Lock()
 
-
-async def _next_gh_key() -> str | None:
-    global _gh_idx
-    if not _GH_KEYS:
-        return None
-    async with _GH_LOCK:
-        k = _GH_KEYS[_gh_idx % len(_GH_KEYS)]
-        _gh_idx = (_gh_idx + 1) % len(_GH_KEYS)
-        return k
-
-
-GH_TOKEN = _GH_KEYS[0] if _GH_KEYS else ""
+_gh_rotator = _KeyRotator("GITHUB_TOKEN", "GH_TOKEN")
+_next_gh_key = _gh_rotator.next
+GH_TOKEN = _gh_rotator.first
 GH_SEARCH_CODE = "https://api.github.com/search/code"
 GH_SEARCH_REPOS = "https://api.github.com/search/repositories"
 GH_SEARCH_ISSUES = "https://api.github.com/search/issues"
@@ -39,69 +52,22 @@ NV_EMBED_DIMS = 4096
 SO_API = "https://api.stackexchange.com/2.3"
 SOFA_KEY = os.environ.get("SOFA_KEY", "")
 SOFA_BASE = "https://agents.stackoverflow.com/api"
-_raw_li = os.environ.get("LI_KEY", "")
-_LI_KEYS = [k.strip() for k in _raw_li.split(",") if k.strip()] if _raw_li else []
-_li_idx = 0
-_LI_LOCK = asyncio.Lock()
 
-
-async def _next_li_key() -> str | None:
-    global _li_idx
-    if not _LI_KEYS:
-        return None
-    async with _LI_LOCK:
-        k = _LI_KEYS[_li_idx % len(_LI_KEYS)]
-        _li_idx = (_li_idx + 1) % len(_LI_KEYS)
-        return k
-
-
-LI_KEY = _LI_KEYS[0] if _LI_KEYS else ""
+_li_rotator = _KeyRotator("LI_KEY")
+_next_li_key = _li_rotator.next
+LI_KEY = _li_rotator.first
 LI_API = "https://libraries.io/api"
-_raw_oss = os.environ.get("OSS_TOKEN", "")
-_OSS_KEYS = [k.strip() for k in _raw_oss.split(",") if k.strip()] if _raw_oss else []
-_oss_idx = 0
-_OSS_LOCK = asyncio.Lock()
 
-
-async def _next_oss_key() -> str | None:
-    global _oss_idx
-    if not _OSS_KEYS:
-        return None
-    async with _OSS_LOCK:
-        k = _OSS_KEYS[_oss_idx % len(_OSS_KEYS)]
-        _oss_idx = (_oss_idx + 1) % len(_OSS_KEYS)
-        return k
-
-
-OSS_TOKEN = _OSS_KEYS[0] if _OSS_KEYS else ""
+_oss_rotator = _KeyRotator("OSS_TOKEN")
+_next_oss_key = _oss_rotator.next
+OSS_TOKEN = _oss_rotator.first
 OSS_API = "https://api.guide.sonatype.com/api/v3/component-report"
-_raw_fc = os.environ.get("FIRECRAWL_KEY", os.environ.get("FIRECRAWL_KEYS", ""))
-_FC_KEYS = [k.strip() for k in _raw_fc.split(",") if k.strip()] if _raw_fc else []
-_fc_idx = 0
-_FC_LOCK = asyncio.Lock()
 
-async def _next_fc_key() -> str | None:
-    global _fc_idx
-    if not _FC_KEYS:
-        return None
-    async with _FC_LOCK:
-        k = _FC_KEYS[_fc_idx % len(_FC_KEYS)]
-        _fc_idx = (_fc_idx + 1) % len(_FC_KEYS)
-        return k
+_fc_rotator = _KeyRotator("FIRECRAWL_KEY", "FIRECRAWL_KEYS")
+_next_fc_key = _fc_rotator.next
 
-_raw_tv = os.environ.get("TAVILY_KEY", os.environ.get("TAVILY_KEYS", ""))
-_TV_KEYS = [k.strip() for k in _raw_tv.split(",") if k.strip()] if _raw_tv else []
-_tv_idx = 0
-_TV_LOCK = asyncio.Lock()
-
-async def _next_tv_key() -> str | None:
-    global _tv_idx
-    if not _TV_KEYS:
-        return None
-    async with _TV_LOCK:
-        k = _TV_KEYS[_tv_idx % len(_TV_KEYS)]
-        _tv_idx = (_tv_idx + 1) % len(_TV_KEYS)
-        return k
+_tv_rotator = _KeyRotator("TAVILY_KEY", "TAVILY_KEYS")
+_next_tv_key = _tv_rotator.next
 GUIDE_API = "https://api.guide.sonatype.com"
 
 REGISTRIES = {
@@ -154,6 +120,8 @@ def _set_cache(key: str, val: Any):
     _cache[key] = (time.monotonic(), val)
     if len(_cache) > _MAX_CACHE:
         now = time.monotonic()
-        stale = [k for k, (t, _) in list(_cache.items()) if now - t > 300]
-        for k in stale:
+        # Evict oldest 25% when over capacity
+        sorted_keys = sorted(_cache, key=lambda k: _cache[k][0])
+        evict_count = max(1, len(sorted_keys) // 4)
+        for k in sorted_keys[:evict_count]:
             _cache.pop(k, None)

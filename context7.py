@@ -7,21 +7,10 @@ from typing import Any
 
 import httpx
 
-from config import CONTEXT7_API_KEY, CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _cached
+from config import CONTEXT7_API_KEY, CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _cached, _KeyRotator
 
-_C7_KEYS: list[str] = [k.strip() for k in CONTEXT7_API_KEY.split(",") if k.strip()] if CONTEXT7_API_KEY else []
-_c7_idx = 0
-_C7_LOCK = asyncio.Lock()
-
-
-async def _next_c7_key() -> str | None:
-    global _c7_idx
-    if not _C7_KEYS:
-        return None
-    async with _C7_LOCK:
-        k = _C7_KEYS[_c7_idx % len(_C7_KEYS)]
-        _c7_idx = (_c7_idx + 1) % len(_C7_KEYS)
-        return k
+_c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
+_next_c7_key = _c7_rotator.next
 
 
 async def _context7_headers() -> dict[str, str]:
@@ -181,10 +170,13 @@ async def fetch_doc_url(url: str) -> dict:
         if r.status_code != 200:
             return {"success": False, "error": f"HTTP {r.status_code}"}
         content = r.text
-        import markdownify
-        md = markdownify.markdownify(content, heading_style="ATX")
+        try:
+            import markdownify
+            md = markdownify.markdownify(content, heading_style="ATX")
+        except ImportError:
+            md = content[:10000]
         return {"success": True, "url": url, "content": md[:10000]}
-    except (httpx.HTTPError, ValueError, ImportError) as e:
+    except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
 
 

@@ -18,20 +18,42 @@ from context7 import context7_resolve, search_llms_txt
 from github_api import search_github, fetch_readme, gh_get_contents, gh_get_languages, gh_get_topics, gh_get_releases
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
-from stack_exchange import search_so, so_similar, so_tags_info, so_tags_wikis
+from stack_exchange import (search_so, so_similar, so_tags_info, so_tags_wikis,
+                            get_questions_by_ids, search_users, search_tags, get_question_comments)
 from sofa import search_sofa
-from hackernews import search_hn, hn_get_item, hn_firebase_stories
-from libraries_io import search_libraries_io, libraries_io_search
-from oss_index import scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version
-from readthedocs import search_readthedocs, readthedocs_project_info, readthedocs_versions
-from registries import search_package, npm_search, crates_search
+from hackernews import search_hn, hn_get_item, hn_firebase_stories, hn_get_user
+from libraries_io import (search_libraries_io, libraries_io_search, get_versions,
+                          get_dependencies, get_dependents, get_github_repo, get_github_dependencies)
+from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
+                       search_vulnerabilities, analyze_license, quick_component_report)
+from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
+                         readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
+from registries import (search_package, npm_search, crates_search, get_npm_versions,
+                        get_npm_time, get_npm_version, get_crates_versions, get_pypi_version)
 from devdocs import devdocs_list_docs, devdocs_fetch, devdocs_fetch_content, devdocs_search, devdocs_meta
 from semantic_scholar import (search_papers, get_paper_details,
                                get_papers_batch, get_paper_citations,
-                               get_paper_references)
+                               get_paper_references, get_paper_recommendations,
+                               search_authors, get_author_papers, autocomplete_papers)
 from reranker import rerank as _rerank
 
 server = Server("codesearch")
+
+_warmup_task: asyncio.Task | None = None
+
+
+def safe_int(v, default=0):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_float(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
 
 
 @server.list_tools()
@@ -81,7 +103,12 @@ async def handle_list_tools() -> list[Tool]:
                     "forks": {"type": "string"},
                     "topics": {"type": "string"},
                     "page": {"type": "integer", "default": 1},
-                    "in_name": {"type": "boolean", "default": False},
+                    "in_qualifier": {"type": "string", "description": "in: qualifier, e.g. 'name,readme,description'"},
+                    "exclude_qualifier": {"type": "string", "description": "NOT qualifier, e.g. 'language:javascript'"},
+                    "merged": {"type": "string"},
+                    "head": {"type": "string"},
+                    "base": {"type": "string"},
+                    "review": {"type": "string"},
                 },
                 "required": ["query"],
             },
@@ -128,7 +155,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "type": {"type": "string", "description": "npm_dist_tags|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords"},
+                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions"},
                 },
                 "required": ["name"],
             },
@@ -150,33 +177,38 @@ async def handle_list_tools() -> list[Tool]:
                     "sort": {"type": "string", "default": "relevance"},
                     "views": {"type": "integer", "default": 0},
                     "answers": {"type": "integer", "default": 0},
-                    "type": {"type": "string", "default": "search"},
+                    "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis", "questions_by_ids", "search_users", "search_tags", "question_comments"]},
                     "site": {"type": "string", "default": "stackoverflow"},
                     "question_id": {"type": "integer"},
+                    "ids": {"type": "string", "description": "Comma-separated question IDs for questions_by_ids"},
                     "content_type": {"type": "string", "enum": ["question", "til", "blueprint"]},
                     "page": {"type": "integer", "default": 1},
                     "post_id": {"type": "string"},
                     "steering": {"type": "string"},
+                    "filter": {"type": "string", "description": "SE API filter (default: withbody)"},
                 },
             },
         ),
         Tool(
             name="hn",
-            description="Hacker News: search, item detail, or story lists (top/new/best/ask/show).",
+            description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search","item","stories"]},
+                    "action": {"type": "string", "enum": ["search","item","stories","user"]},
                     "query": {"type": "string"},
                     "count": {"type": "integer", "default": 5},
                     "sort_by_date": {"type": "boolean"},
-                    "tags": {"type": "string", "default": "story"},
+                    "tags": {"type": "string", "default": "story", "description": "story|comment|poll|front_page|ask_hn|show_hn"},
                     "min_points": {"type": "integer", "default": 0},
                     "min_comments": {"type": "integer", "default": 0},
                     "before": {"type": "integer"},
                     "after": {"type": "integer"},
                     "item_id": {"type": "integer"},
                     "firebase_type": {"type": "string"},
+                    "page": {"type": "integer", "default": 0},
+                    "hits_per_page": {"type": "integer", "default": 20},
+                    "username": {"type": "string"},
                 },
                 "required": [],
             },
@@ -194,22 +226,28 @@ async def handle_list_tools() -> list[Tool]:
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
+                    "action": {"type": "string", "description": "versions|dependencies|dependents|github_repo|github_dependencies"},
+                    "version": {"type": "string"},
+                    "owner": {"type": "string"},
+                    "repo": {"type": "string"},
                 },
             },
         ),
         Tool(
             name="vulns",
-            description="Sonatype Guide: scan packages, vulnerability details, or latest version by PURL.",
+            description="Sonatype Guide: scan packages, vulnerability details, latest version, search, license analysis, or quick report by PURL.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version"]},
+                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "search", "license", "quick_report"]},
                     "platform": {"type": "string"},
                     "name": {"type": "string"},
                     "version": {"type": "string"},
                     "coordinates": {"type": "string"},
                     "vuln_id": {"type": "string"},
                     "purl": {"type": "string"},
+                    "keyword": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
                 },
                 "required": [],
             },
@@ -236,7 +274,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "rtd_info", "rtd_versions", "rtd_search"]},
+                    "action": {"type": "string", "enum": ["devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"]},
                     "slug": {"type": "string"},
                     "query": {"type": "string"},
                     "path": {"type": "string"},
@@ -248,14 +286,15 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="papers",
-            description="Semantic Scholar: search, details, batch, citations, or references.",
+            description="Semantic Scholar: search, details, batch, citations, references, recommendations, author search, author papers, or autocomplete.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
+                    "author_id": {"type": "string"},
                     "limit": {"type": "integer", "default": 10},
                     "year": {"type": "string"},
                     "fields_of_study": {"type": "string"},
@@ -275,18 +314,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             content=[TextContent(type="text", text=json.dumps({"error": "arguments must be a dict"}))],
             isError=True,
         )
-
-    def safe_int(v, default=0):
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return default
-
-    def safe_float(v, default=0.0):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return default
 
     def _res(data, ok=True):
         return CallToolResult(
@@ -377,7 +404,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 forks=str(arguments.get("forks", "")),
                 topics=str(arguments.get("topics", "")),
                 page=int(arguments.get("page", 1)),
-                in_name="true" if bool(arguments.get("in_name", False)) else "",
+                in_qualifier=str(arguments.get("in_qualifier", "")),
+                exclude_qualifier=str(arguments.get("exclude_qualifier", "")),
+                merged=str(arguments.get("merged", "")),
+                head=str(arguments.get("head", "")),
+                base=str(arguments.get("base", "")),
+                review=str(arguments.get("review", "")),
             )
             return _res(r, r.get("success", False))
 
@@ -438,6 +470,28 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     post_id=str(arguments.get("post_id", "")),
                     steering=str(arguments.get("steering", "")),
                 )
+            elif action == "questions_by_ids":
+                ids_str = str(arguments.get("ids", ""))
+                ids = [int(x.strip()) for x in ids_str.split(",") if x.strip().isdigit()]
+                r = await get_questions_by_ids(ids, site=str(arguments.get("site", "stackoverflow")))
+            elif action == "search_users":
+                r = await search_users(
+                    query=str(arguments.get("query", "")),
+                    site=str(arguments.get("site", "stackoverflow")),
+                    count=int(arguments.get("count", 10)),
+                )
+            elif action == "search_tags":
+                r = await search_tags(
+                    query=str(arguments.get("query", "")),
+                    site=str(arguments.get("site", "stackoverflow")),
+                    count=int(arguments.get("count", 10)),
+                )
+            elif action == "question_comments":
+                r = await get_question_comments(
+                    question_id=int(arguments.get("question_id", 0)),
+                    site=str(arguments.get("site", "stackoverflow")),
+                    count=int(arguments.get("count", 20)),
+                )
             else:
                 r = await search_so(
                     query=str(arguments.get("query", "")),
@@ -454,6 +508,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     site=str(arguments.get("site", "stackoverflow")),
                     question_id=int(arguments.get("question_id", 0)),
                     page=int(arguments.get("page", 1)),
+                    filter=str(arguments.get("filter", "")),
                 )
             return _res(r, r.get("success", False))
 
@@ -464,6 +519,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action == "stories":
                 r = await hn_firebase_stories(story_type=str(arguments.get("firebase_type", "top")),
                     count=int(arguments.get("count", 10)))
+            elif action == "user":
+                r = await hn_get_user(str(arguments.get("username", "")))
             elif action == "search":
                 r = await search_hn(
                     query=str(arguments.get("query", "")),
@@ -474,23 +531,37 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     min_comments=int(arguments.get("min_comments", 0)),
                     before=int(arguments.get("before", 0)),
                     after=int(arguments.get("after", 0)),
+                    page=int(arguments.get("page", 0)),
+                    hits_per_page=int(arguments.get("hits_per_page", 20)),
                 )
             else:
                 return _res({"error": f"unknown hn action: {action}"}, False)
             return _res(r, r.get("success", False))
 
         elif name == "search_libraries":
+            action = str(arguments.get("action", ""))
             q = str(arguments.get("query", ""))
             n = str(arguments.get("name", ""))
-            sort = str(arguments.get("sort", ""))
-            languages = str(arguments.get("languages", ""))
-            licenses = str(arguments.get("licenses", ""))
-            keywords = str(arguments.get("keywords", ""))
-            if q and not n:
-                r = await libraries_io_search(q, platform=str(arguments.get("platform", "")),
+            platform = str(arguments.get("platform", ""))
+            if action == "versions":
+                r = await get_versions(platform, n)
+            elif action == "dependencies":
+                r = await get_dependencies(platform, n, version=str(arguments.get("version", "")))
+            elif action == "dependents":
+                r = await get_dependents(platform, n)
+            elif action == "github_repo":
+                r = await get_github_repo(str(arguments.get("owner", "")), str(arguments.get("repo", "")))
+            elif action == "github_dependencies":
+                r = await get_github_dependencies(str(arguments.get("owner", "")), str(arguments.get("repo", "")))
+            elif q and not n:
+                sort = str(arguments.get("sort", ""))
+                languages = str(arguments.get("languages", ""))
+                licenses = str(arguments.get("licenses", ""))
+                keywords = str(arguments.get("keywords", ""))
+                r = await libraries_io_search(q, platform=platform,
                                               sort=sort, languages=languages, licenses=licenses, keywords=keywords)
             else:
-                r = await search_libraries_io(n or q, platform=str(arguments.get("platform", "")))
+                r = await search_libraries_io(n or q, platform=platform)
             return _res(r, r.get("success", False))
 
         elif name == "vulns":
@@ -499,6 +570,15 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await get_vulnerability_detail(vuln_id=str(arguments.get("vuln_id", "")))
             elif action == "latest_version":
                 r = await get_component_latest_version(purl=str(arguments.get("purl", "")))
+            elif action == "search":
+                r = await search_vulnerabilities(
+                    keyword=str(arguments.get("keyword", "")),
+                    limit=int(arguments.get("limit", 10)),
+                )
+            elif action == "license":
+                r = await analyze_license(purl=str(arguments.get("purl", "")))
+            elif action == "quick_report":
+                r = await quick_component_report(purl=str(arguments.get("purl", "")))
             else:
                 r = await scan_vulnerabilities(
                     platform=str(arguments.get("platform", "")),
@@ -549,6 +629,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await search_readthedocs(str(arguments.get("project", "")),
                                              str(arguments.get("query", "")),
                                              version=str(arguments.get("version", "")))
+            elif action == "rtd_translations":
+                r = await readthedocs_translations(str(arguments.get("project", "")))
+            elif action == "rtd_subprojects":
+                r = await readthedocs_subprojects(str(arguments.get("project", "")))
+            elif action == "rtd_builds":
+                r = await readthedocs_builds(str(arguments.get("project", "")))
             else:
                 return _res({"error": f"unknown docs action: {action}"}, False)
             return _res(r, r.get("success", False))
@@ -568,7 +654,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks = []
             task_names = []
 
-            tasks.append(context7_resolve(lib, version=version))
+            tasks.append(context7_resolve(lib, version=version, fast=bool(arguments.get("fast", False)),
+                                             library_id=str(arguments.get("library_id", ""))))
             task_names.append("context7")
 
             if GH_TOKEN:
@@ -762,6 +849,21 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await get_paper_references(
                     paper_id=str(arguments.get("paper_id", "")),
                     limit=int(arguments.get("limit", 20)))
+            elif action == "recommendations":
+                r = await get_paper_recommendations(
+                    paper_id=str(arguments.get("paper_id", "")),
+                    limit=int(arguments.get("limit", 10)))
+            elif action == "author_search":
+                r = await search_authors(
+                    query=str(arguments.get("query", "")),
+                    limit=int(arguments.get("limit", 10)))
+            elif action == "author_papers":
+                r = await get_author_papers(
+                    author_id=str(arguments.get("author_id", "")),
+                    limit=int(arguments.get("limit", 10)))
+            elif action == "autocomplete":
+                r = await autocomplete_papers(
+                    query=str(arguments.get("query", "")))
             else:
                 r = await search_papers(
                     query=str(arguments.get("query", "")),
@@ -789,7 +891,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
 
 
 async def _warmup_reranker():
-    """Pre-load reranker model in background to avoid cold-start delay."""
     try:
         from reranker import rerank
         await rerank("warmup", [{"title": "warmup", "snippet": "warmup"}], top_k=1)
@@ -798,7 +899,8 @@ async def _warmup_reranker():
 
 
 async def main():
-    asyncio.create_task(_warmup_reranker())
+    global _warmup_task
+    _warmup_task = asyncio.create_task(_warmup_reranker())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

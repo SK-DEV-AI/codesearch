@@ -95,3 +95,137 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
         return {"success": True, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def get_versions(platform: str, name: str) -> dict:
+    if not LI_KEY:
+        return {"success": False, "error": "LI_KEY not configured"}
+    li_key = await _next_li_key()
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/versions",
+                            params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Libraries.io versions: {r.status_code}"}
+        data = r.json()
+        results = []
+        for v in (data if isinstance(data, list) else [])[:50]:
+            results.append({
+                "number": v.get("number", ""),
+                "published_at": v.get("published_at", ""),
+                "platform": v.get("platform", ""),
+            })
+        return {"success": True, "results": results, "total": len(results)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
+    if not LI_KEY:
+        return {"success": False, "error": "LI_KEY not configured"}
+    li_key = await _next_li_key()
+    try:
+        url = f"{LI_API}/{platform}/{urllib.parse.quote(name)}"
+        if version:
+            url += f"/{urllib.parse.quote(version)}"
+        url += "/dependencies"
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(url, params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Libraries.io dependencies: {r.status_code}"}
+        data = r.json()
+        deps = []
+        for dep in (data.get("dependencies", []) or [])[:50]:
+            deps.append({
+                "name": dep.get("name", ""),
+                "platform": dep.get("platform", ""),
+                "requirements": dep.get("requirements", ""),
+                "kind": dep.get("kind", ""),
+                "latest_version": dep.get("latest_version_number", ""),
+            })
+        return {"success": True, "results": deps, "total": len(deps)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_dependents(platform: str, name: str) -> dict:
+    if not LI_KEY:
+        return {"success": False, "error": "LI_KEY not configured"}
+    li_key = await _next_li_key()
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/dependents",
+                            params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Libraries.io dependents: {r.status_code}"}
+        data = r.json()
+        results = []
+        for dep in (data if isinstance(data, list) else [])[:50]:
+            results.append({
+                "name": dep.get("name", ""),
+                "platform": dep.get("platform", ""),
+                "latest_version": dep.get("latest_version_number", ""),
+                "dependent_repos_count": dep.get("dependent_repos_count", 0),
+            })
+        return {"success": True, "results": results, "total": len(results)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_github_repo(owner: str, repo: str) -> dict:
+    if not LI_KEY:
+        return {"success": False, "error": "LI_KEY not configured"}
+    li_key = await _next_li_key()
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}",
+                            params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Libraries.io github: {r.status_code}"}
+        d = r.json()
+        return {"success": True, "result": {
+            "name": d.get("name", ""),
+            "full_name": d.get("full_name", ""),
+            "description": (d.get("description") or "")[:300],
+            "stars": d.get("stars", 0),
+            "forks": d.get("forks", 0),
+            "language": d.get("language", ""),
+            "license": d.get("license", ""),
+            "homepage": d.get("homepage", ""),
+            "repository": d.get("repository_url", ""),
+            "open_issues": d.get("open_issues", 0),
+            "watchers": d.get("watchers", 0),
+            "source_rank": d.get("source_rank", 0),
+        }}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_github_dependencies(owner: str, repo: str) -> dict:
+    if not LI_KEY:
+        return {"success": False, "error": "LI_KEY not configured"}
+    li_key = await _next_li_key()
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}/dependencies",
+                            params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"Libraries.io github deps: {r.status_code}"}
+        data = r.json()
+        deps = []
+        for dep in (data.get("dependencies", []) or [])[:50]:
+            deps.append({
+                "name": dep.get("name", ""),
+                "platform": dep.get("platform", ""),
+                "requirements": dep.get("requirements", ""),
+                "kind": dep.get("kind", ""),
+                "latest_version": dep.get("latest_version_number", ""),
+            })
+        return {"success": True, "results": deps, "total": len(deps)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}

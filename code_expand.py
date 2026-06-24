@@ -3,31 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 
-_GROQ_KEYS: list[str] = []
-_key_idx = 0
-_KEY_LOCK = asyncio.Lock()
+from config import _KeyRotator
 
-
-def _init():
-    global _GROQ_KEYS
-    raw = os.environ.get("GROQ_API_KEYS", "")
-    if raw:
-        _GROQ_KEYS[:] = [k.strip() for k in raw.split(",") if k.strip()]
-
-
-async def _next_key() -> str | None:
-    global _key_idx
-    async with _KEY_LOCK:
-        if not _GROQ_KEYS:
-            _init()
-        if not _GROQ_KEYS:
-            return None
-        key = _GROQ_KEYS[_key_idx % len(_GROQ_KEYS)]
-        _key_idx = (_key_idx + 1) % len(_GROQ_KEYS)
-        return key
+_groq_rotator = _KeyRotator("GROQ_API_KEYS")
+_next_key = _groq_rotator.next
 
 
 CODE_KEYWORDS = re.compile(

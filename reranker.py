@@ -122,7 +122,7 @@ async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict
             logger.warning(f"reranker: invalid JSON response: {e}")
             return passages[:top_k]
 
-    if result.get("error"):
-        logger.warning(f"reranker error: {result['error']}")
-        return passages[:top_k]
-    return result.get("scores", [])
+        if result.get("error"):
+            logger.warning(f"reranker error: {result['error']}")
+            return passages[:top_k]
+        return result.get("scores", [])

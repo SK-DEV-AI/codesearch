@@ -1,0 +1,3 @@
+httpx>=0.25.0
+mcp>=1.27.0
+markdownify>=1.0.0

@@ -94,3 +94,72 @@ async def readthedocs_versions(project: str) -> dict:
         return {"success": True, "results": results, "total": data.get("count", len(results))}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def readthedocs_translations(project: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+            r = await c.get(f"{RTD_API}/projects/{project}/translations/",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"ReadTheDocs translations: {r.status_code}"}
+        data = r.json()
+        results = []
+        for t in (data.get("results", []) or [])[:20]:
+            results.append({
+                "slug": t.get("slug", ""),
+                "language": t.get("language", {}).get("code", "") if isinstance(t.get("language"), dict) else t.get("language", ""),
+                "url": t.get("url", ""),
+                "default_version": t.get("default_version", ""),
+            })
+        return {"success": True, "results": results, "total": data.get("count", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def readthedocs_subprojects(project: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+            r = await c.get(f"{RTD_API}/projects/{project}/subprojects/",
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"ReadTheDocs subprojects: {r.status_code}"}
+        data = r.json()
+        results = []
+        for sp in (data.get("results", []) or [])[:20]:
+            child = sp.get("child", {})
+            results.append({
+                "alias": sp.get("alias", ""),
+                "child_slug": child.get("slug", "") if isinstance(child, dict) else str(child),
+                "child_name": child.get("name", "") if isinstance(child, dict) else "",
+            })
+        return {"success": True, "results": results, "total": data.get("count", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def readthedocs_builds(project: str, limit: int = 10) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+            r = await c.get(f"{RTD_API}/projects/{project}/builds/",
+                            params={"limit": min(limit, 50)},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"ReadTheDocs builds: {r.status_code}"}
+        data = r.json()
+        results = []
+        for b in (data.get("results", []) or [])[:limit]:
+            results.append({
+                "id": b.get("id", 0),
+                "commit": b.get("commit", ""),
+                "status": b.get("status", ""),
+                "success": b.get("success"),
+                "error": b.get("error", ""),
+                "created": b.get("created", ""),
+                "finished": b.get("finished", ""),
+                "duration": b.get("duration"),
+                "version": b.get("version", {}).get("slug", "") if isinstance(b.get("version"), dict) else "",
+            })
+        return {"success": True, "results": results, "total": data.get("count", len(results))}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}

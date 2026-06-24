@@ -28,9 +28,9 @@ def _parse_mcp_sse(text: str) -> dict | None:
 async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
     repo_label = f"{owner}/{repo}"
     last_err = None
-    for attempt in range(MAX_DEEPWIKI_RETRIES):
-        try:
-            async with httpx.AsyncClient(timeout=20) as c:
+    async with httpx.AsyncClient(timeout=20) as c:
+        for attempt in range(MAX_DEEPWIKI_RETRIES):
+            try:
                 headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
                 init = await c.post(DEEPWIKI_MCP, json={
                     "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -79,11 +79,11 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                                 texts.append(item["text"])
                         detail = "\n\n".join(texts)[:10000]
                 return {"success": True, "source": "deepwiki_mcp", "repo": repo_label, "structure": sections[:5], "detail": detail}
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
-            last_err = str(e)
-            if attempt < MAX_DEEPWIKI_RETRIES - 1:
-                await asyncio.sleep(BASE_DELAY * (2 ** attempt))
-                continue
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
+                last_err = str(e)
+                if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                    await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                    continue
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
             r = await c.get(f"https://deepwiki.com/{owner}/{repo}", headers={"User-Agent": "mcp-codesearch/1.0"})
