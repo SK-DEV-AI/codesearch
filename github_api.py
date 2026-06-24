@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import base64
+from typing import Any
+
+import httpx
+
+from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key
+
+
+async def _gh_headers(media_type: str = "github+json") -> dict[str, str]:
+    h = {"User-Agent": "mcp-codesearch/1.0", "Accept": f"application/vnd.{media_type}"}
+    token = await _next_gh_key() or GH_TOKEN
+    if token:
+        h["Authorization"] = f"token {token}"
+    return h
+
+
+async def search_github(q: str, search_type: str = "code", count: int = 10,
+                        owner: str = "", repo: str = "", language: str = "",
+                        sort: str = "", order: str = "",
+                        filename: str = "", extension: str = "",
+                        path: str = "", created: str = "",
+                        state: str = "", labels: str = "",
+                        user: str = "", org: str = "",
+                        size: str = "", in_name: str = "",
+                        is_: str = "", pushed: str = "",
+                        stars: str = "", forks: str = "",
+                        topics: str = "", page: int = 1) -> dict:
+    cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}"
+    cached = _cached(cache_key)
+    if cached is not None:
+        return {"success": True, "results": cached, "cached": True}
+    try:
+        query_parts = [q]
+        if owner:
+            query_parts.append(f"user:{owner}" if not repo else f"repo:{owner}/{repo}")
+        if repo and not owner:
+            query_parts.append(f"repo:{repo}")
+        if user:
+            query_parts.append(f"user:{user}")
+        if org:
+            query_parts.append(f"org:{org}")
+        if language:
+            query_parts.append(f"language:{language}")
+        if filename:
+            query_parts.append(f"filename:{filename}")
+        if extension:
+            query_parts.append(f"extension:{extension}")
+        if path:
+            query_parts.append(f"path:{path}")
+        if size:
+            query_parts.append(f"size:{size}")
+        if in_name:
+            query_parts.append(f"in:name")
+        if is_:
+            query_parts.append(f"is:{is_}")
+        if created and search_type == "issues":
+            query_parts.append(f"created:{created}")
+        if pushed and search_type == "repos":
+            query_parts.append(f"pushed:{pushed}")
+        if stars:
+            query_parts.append(f"stars:{stars}")
+        if forks:
+            query_parts.append(f"forks:{forks}")
+        if topics:
+            query_parts.append(f"topics:{topics}")
+        if state and search_type == "issues":
+            query_parts.append(f"state:{state}")
+        if labels and search_type == "issues":
+            for lbl in labels.split(","):
+                query_parts.append(f"label:{lbl.strip()}")
+        full_query = " ".join(query_parts)
+        if search_type == "repos":
+            url = GH_SEARCH_REPOS
+        elif search_type == "issues":
+            url = GH_SEARCH_ISSUES
+        elif search_type == "users":
+            url = "https://api.github.com/search/users"
+        else:
+            url = GH_SEARCH_CODE
+        params: dict[str, Any] = {"q": full_query, "per_page": min(count, 100)}
+        if page > 1:
+            params["page"] = page
+        if sort:
+            params["sort"] = sort
+        if order:
+            params["order"] = order
+        mt = "github.v3.text-match+json" if search_type == "code" else "github+json"
+        r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub API: {r.status_code} {r.text[:200]}"}
+        data = r.json()
+        items = data.get("items", [])[:count]
+        results = []
+        if search_type == "code":
+            for item in items:
+                text_matches = item.get("text_matches", [])
+                snippet = text_matches[0]["fragment"] if text_matches else ""
+                results.append({
+                    "file": item["name"], "path": item["path"],
+                    "url": item["html_url"], "repo": item["repository"]["full_name"],
+                    "snippet": snippet[:500],
+                })
+        elif search_type == "repos":
+            for item in items:
+                results.append({
+                    "full_name": item["full_name"],
+                    "description": (item.get("description") or "")[:200],
+                    "stars": item.get("stargazers_count", 0),
+                    "forks": item.get("forks_count", 0),
+                    "language": item.get("language") or "",
+                    "topics": item.get("topics", []),
+                    "url": item["html_url"],
+                    "updated_at": item.get("updated_at", ""),
+                    "open_issues": item.get("open_issues_count", 0),
+                    "license": (item.get("license") or {}).get("spdx_id", ""),
+                })
+        elif search_type == "users":
+            for item in items:
+                results.append({
+                    "login": item.get("login", ""),
+                    "avatar": item.get("avatar_url", ""),
+                    "html_url": item.get("html_url", ""),
+                    "type": item.get("type", "User"),
+                    "score": item.get("score", 0),
+                })
+        else:
+            for item in items:
+                results.append({
+                    "title": item["title"],
+                    "state": item["state"],
+                    "body": (item.get("body") or "")[:500],
+                    "labels": [l["name"] for l in item.get("labels", [])],
+                    "url": item["html_url"],
+                    "repo": item.get("repository_url", "").replace("https://api.github.com/repos/", ""),
+                    "created_at": item.get("created_at", ""),
+                    "updated_at": item.get("updated_at", ""),
+                    "comments": item.get("comments", 0),
+                    "user": item.get("user", {}).get("login", ""),
+                })
+        _set_cache(cache_key, results)
+        return {"success": True, "results": results, "total": data.get("total_count", 0)}
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def fetch_readme(owner: str, repo: str, branch: str = "") -> dict:
+    cache_key = f"readme:{owner}:{repo}:{branch}"
+    cached = _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        url = f"{GH_API}/repos/{owner}/{repo}/readme"
+        if branch:
+            url += f"?ref={branch}"
+        gh_headers = await _gh_headers()
+        r = await _http_request("GET", url, headers={**gh_headers, "Accept": "application/vnd.github.raw"})
+        if r.status_code == 404:
+            return {"success": False, "error": "no README found"}
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        result = {"success": True, "content": r.text[:15000], "repo": f"{owner}/{repo}"}
+        _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_contents(owner: str, repo: str, path: str = "", branch: str = "") -> dict:
+    try:
+        url = f"{GH_API}/repos/{owner}/{repo}/contents/{path}"
+        params: dict[str, str] = {}
+        if branch:
+            params["ref"] = branch
+        r = await _http_request("GET", url, params=params, headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        data = r.json()
+        if isinstance(data, list):
+            entries = [{"name": f["name"], "type": f["type"], "size": f.get("size", 0)} for f in data]
+            return {"success": True, "entries": entries}
+        content = ""
+        if data.get("encoding") == "base64":
+            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        return {"success": True, "name": data.get("name", ""), "content": content[:15000], "size": data.get("size", 0)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_languages(owner: str, repo: str) -> dict:
+    cache_key = f"gh_lang:{owner}:{repo}"
+    cached = _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/languages", headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        result = {"success": True, "languages": r.json()}
+        _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_topics(owner: str, repo: str) -> dict:
+    cache_key = f"gh_topics:{owner}:{repo}"
+    cached = _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        gh_hdrs = await _gh_headers()
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/topics",
+                                headers=gh_hdrs)
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        result = {"success": True, "topics": r.json().get("names", [])}
+        _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
+    cache_key = f"gh_rel:{owner}:{repo}:{count}"
+    cached = _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/releases",
+                                params={"per_page": min(count, 20)}, headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        items = r.json()[:count]
+        results = [{"tag": rel.get("tag_name", ""), "name": rel.get("name", ""),
+                     "published": rel.get("published_at", ""), "prerelease": rel.get("prerelease", False),
+                     "body": (rel.get("body") or "")[:500]}
+                    for rel in items]
+        result = {"success": True, "releases": results}
+        _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
