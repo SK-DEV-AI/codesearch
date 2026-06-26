@@ -144,6 +144,7 @@ async def handle_list_tools() -> list[Tool]:
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
+                    "count": {"type": "integer", "default": 10, "description": "Results per source (max 50)"},
                 },
                 "required": ["query"],
             },
@@ -650,6 +651,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             owner = str(arguments.get("owner", ""))
             repo = str(arguments.get("repo", ""))
             language = str(arguments.get("language", ""))
+            cnt = min(max(safe_int(arguments.get("count", 10)), 1), 50)
             lib = library or (query.split()[0] if query.strip() else "")
 
             expanded = await expand_code_query(query)
@@ -658,56 +660,55 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks = []
             task_names = []
 
-            tasks.append(context7_resolve(lib, version=version, fast=bool(arguments.get("fast", False)),
-                                             library_id=str(arguments.get("library_id", ""))))
+            tasks.append(context7_resolve(lib, version=version))
             task_names.append("context7")
 
             if GH_TOKEN:
-                tasks.append(search_github(query, "code", 10, owner, repo, language))
+                tasks.append(search_github(query, "code", cnt, owner, repo, language))
                 task_names.append("github")
 
             if owner and repo:
                 tasks.append(deepwiki_fetch(owner, repo))
                 task_names.append("deepwiki")
 
-            tasks.append(codewiki_search_repos(query, 3))
+            tasks.append(codewiki_search_repos(query, cnt // 3 + 1))
             task_names.append("codewiki")
 
-            tasks.append(search_so(query, 3, ""))
+            tasks.append(search_so(query, cnt // 3 + 1, ""))
             task_names.append("so")
 
             if SOFA_KEY:
-                tasks.append(search_sofa(query, 3))
+                tasks.append(search_sofa(query, cnt // 3 + 1))
                 task_names.append("sofa")
 
-            tasks.append(search_hn(query, 3))
+            tasks.append(search_hn(query, cnt // 3 + 1))
             task_names.append("hn")
 
             if LI_KEY:
-                tasks.append(libraries_io_search(query))
+                tasks.append(libraries_io_search(query, per_page=cnt))
                 task_names.append("libraries_io")
 
-            tasks.append(npm_search(query, 5))
+            tasks.append(npm_search(query, cnt))
             task_names.append("npm")
 
-            tasks.append(crates_search(query, 5))
+            tasks.append(crates_search(query, cnt))
             task_names.append("crates")
 
             tasks.append(devdocs_search(lib, query) if lib else devdocs_list_docs())
             task_names.append("devdocs")
 
-            tasks.append(search_papers(query, 5))
+            tasks.append(search_papers(query, cnt))
             task_names.append("s2_papers")
 
             if CORE_API_AVAILABLE:
-                tasks.append(search_core_works(query, 5))
+                tasks.append(search_core_works(query, cnt))
                 task_names.append("core_papers")
 
             async def _firecrawl():
                 key = await _next_fc_key()
                 if not key:
                     return {"success": False, "results": []}
-                body = {"query": code_q, "limit": 10, "categories": ["github"],
+                body = {"query": code_q, "limit": cnt, "categories": ["github"],
                         "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": True}}
                 try:
                     c = get_http_client()
@@ -732,7 +733,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 try:
                     c = get_http_client()
                     r = await c.post(TAVILY_SEARCH,
-                        json={"query": code_q, "search_depth": "basic", "max_results": 5,
+                        json={"query": code_q, "search_depth": "basic", "max_results": cnt,
                               "include_answer": False, "topic": "general"},
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
                     if r.status_code != 200:
@@ -864,7 +865,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 merged["total_deduped"] = len(deduped)
             if merged.get("deduped_results"):
                 try:
-                    merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=20)
+                    merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=min(cnt * 2, 50))
                 except Exception:
                     pass
             return _res(merged, bool(merged))
