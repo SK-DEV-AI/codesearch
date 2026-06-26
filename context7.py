@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from config import CONTEXT7_API_KEY, CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _cached, _KeyRotator
+from config import CONTEXT7_API_KEY, CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _cached, _KeyRotator, get_http_client
 
 _c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
 _next_c7_key = _c7_rotator.next
@@ -26,8 +26,8 @@ async def context7_search_lib(query: str, fast: bool = False, page: int = 1, lim
         params: dict[str, Any] = {"libraryName": query, "query": query, "page": page, "limit": limit}
         if fast:
             params["fast"] = "true"
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(CONTEXT7_SEARCH, params=params, headers=await _context7_headers())
+        c = get_http_client()
+        r = await c.get(CONTEXT7_SEARCH, params=params, headers=await _context7_headers())
         if r.status_code != 200:
             return []
         data = r.json()
@@ -57,8 +57,8 @@ async def context7_fetch_docs(library_id: str, query: str, fast: bool = False) -
         params: dict[str, Any] = {"libraryId": library_id, "query": query, "type": "json"}
         if fast:
             params["fast"] = "true"
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get(CONTEXT7_CONTEXT, params=params, headers=await _context7_headers())
+        c = get_http_client()
+        r = await c.get(CONTEXT7_CONTEXT, params=params, headers=await _context7_headers())
         if r.status_code == 202:
             return {"success": False, "error": "library still processing, retry later"}
         if r.status_code == 301:
@@ -138,8 +138,8 @@ async def fetch_llms_txt(url: str) -> dict:
     try:
         if not url.endswith("llms.txt"):
             url = url.rstrip("/") + "/llms.txt"
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"HTTP {r.status_code}"}
         text = r.text
@@ -165,8 +165,8 @@ async def fetch_llms_txt(url: str) -> dict:
 
 async def fetch_doc_url(url: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"HTTP {r.status_code}"}
         content = r.text

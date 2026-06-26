@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from config import get_http_client
+
 CODEWIKI_URL = "https://codewiki.google/_/BoqAngularSdlcAgentsUi/data/batchexecute"
 MAX_CODEWIKI_RETRIES = 3
 BASE_DELAY = 1.0
@@ -45,11 +47,11 @@ async def codewiki_rpc(rpc_id: str, payload: list, source_path: str = "/") -> di
             body_obj = [[[rpc_id, json.dumps(payload), None, "generic"]]]
             body = f"f.req={urllib.parse.quote(json.dumps(body_obj))}&"
             params = {"rpcids": rpc_id, "rt": "c", "source-path": source_path}
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.post(
-                    CODEWIKI_URL, params=params, content=body,
-                    headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
-                )
+            c = get_http_client()
+            r = await c.post(
+                CODEWIKI_URL, params=params, content=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+            )
             if r.status_code != 200:
                 last_err = f"CodeWiki HTTP {r.status_code}"
                 if attempt < MAX_CODEWIKI_RETRIES - 1:

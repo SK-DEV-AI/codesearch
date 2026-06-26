@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, _cached, _set_cache
+from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, _cached, _set_cache, get_http_client
 
 NPM_DOWNLOADS = "https://api.npmjs.org/downloads/point/last-month"
 PYPI_STATS = "https://pypistats.org/api/packages"
@@ -43,8 +43,8 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
             headers = {"User-Agent": "mcp-codesearch/1.0"}
             if reg_name == "crates":
                 headers["Accept"] = "application/json"
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-                r = await c.get(url, headers=headers)
+            c = get_http_client()
+            r = await c.get(url, headers=headers)
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -61,9 +61,9 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
                     "dev_dependencies": list(data.get("devDependencies", {}).keys())[:5],
                 }
                 try:
-                    async with httpx.AsyncClient(timeout=5) as dls_c:
-                        dls_r = await dls_c.get(f"{NPM_DOWNLOADS}/{urllib.parse.quote(name)}",
-                                                headers={"User-Agent": "mcp-codesearch/1.0"})
+                    c = get_http_client()
+                    dls_r = await c.get(f"{NPM_DOWNLOADS}/{urllib.parse.quote(name)}",
+                                        headers={"User-Agent": "mcp-codesearch/1.0"})
                     if dls_r.status_code == 200:
                         dls_data = dls_r.json()
                         results[reg_name]["downloads_last_month"] = dls_data.get("downloads", 0)
@@ -86,9 +86,9 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
                     "yanked_reason": info.get("yanked_reason", ""),
                 }
                 try:
-                    async with httpx.AsyncClient(timeout=5) as dls_c:
-                        dls_r = await dls_c.get(f"{PYPI_STATS}/{urllib.parse.quote(name)}/recent",
-                                                headers={"User-Agent": "mcp-codesearch/1.0"})
+                    c = get_http_client()
+                    dls_r = await c.get(f"{PYPI_STATS}/{urllib.parse.quote(name)}/recent",
+                                        headers={"User-Agent": "mcp-codesearch/1.0"})
                     if dls_r.status_code == 200:
                         dls_data = dls_r.json()
                         results[reg_name]["downloads_last_month"] = dls_data.get("data", {}).get("last_month", 0)
@@ -132,8 +132,8 @@ async def npm_search(query: str, count: int = 10,
             params["maintenance"] = maintenance
         if size > 0:
             params["size"] = size
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(NPM_SEARCH, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(NPM_SEARCH, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"npm search: {r.status_code}"}
         data = r.json()
@@ -164,9 +164,9 @@ async def npm_search(query: str, count: int = 10,
 
 async def _npm_dist_tags(name: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/dist-tags",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/dist-tags",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"npm dist-tags: {r.status_code}"}
         return {"success": True, "name": name, "dist_tags": r.json()}
@@ -176,9 +176,9 @@ async def _npm_dist_tags(name: str) -> dict:
 
 async def get_npm_versions(name: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"npm versions: {r.status_code}"}
         data = r.json()
@@ -190,9 +190,9 @@ async def get_npm_versions(name: str) -> dict:
 
 async def get_npm_time(name: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"npm time: {r.status_code}"}
         data = r.json()
@@ -204,9 +204,9 @@ async def get_npm_time(name: str) -> dict:
 
 async def get_npm_version(name: str, version: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"npm version: {r.status_code}"}
         data = r.json()
@@ -219,9 +219,9 @@ async def get_npm_version(name: str, version: str) -> dict:
 
 async def get_crates_versions(name: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates versions: {r.status_code}"}
         data = r.json()
@@ -240,9 +240,9 @@ async def get_crates_versions(name: str) -> dict:
 
 async def get_pypi_version(name: str, version: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"PyPI version: {r.status_code}"}
         data = r.json()
@@ -285,9 +285,9 @@ async def crates_search(query: str, count: int = 10,
                 params["q"] = f"keywords:{keywords}"
         if categories:
             params["category"] = categories
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(CRATES_SEARCH, params=params,
-                            headers={"User-Agent": "mcp-codesearch/1.0 (mcp-codesearch)", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(CRATES_SEARCH, params=params,
+                        headers={"User-Agent": "mcp-codesearch/1.0 (mcp-codesearch)", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io search: {r.status_code}"}
         data = r.json()
@@ -312,9 +312,9 @@ async def crates_search(query: str, count: int = 10,
 
 async def _crates_downloads(name: str, count: int = 10) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/downloads",
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/downloads",
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io downloads: {r.status_code}"}
         data = r.json()
@@ -325,10 +325,10 @@ async def _crates_downloads(name: str, count: int = 10) -> dict:
 
 async def _crates_reverse_deps(name: str, count: int = 10) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/reverse_dependencies",
-                            params={"per_page": min(count, 100)},
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/reverse_dependencies",
+                        params={"per_page": min(count, 100)},
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io reverse_deps: {r.status_code}"}
         data = r.json()
@@ -348,9 +348,9 @@ async def _crates_reverse_deps(name: str, count: int = 10) -> dict:
 
 async def _crates_owners(name: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/owners",
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/owners",
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io owners: {r.status_code}"}
         data = r.json()
@@ -369,9 +369,9 @@ async def _crates_owners(name: str) -> dict:
 
 async def _crates_categories() -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/categories",
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/categories",
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io categories: {r.status_code}"}
         data = r.json()
@@ -391,9 +391,9 @@ async def _crates_categories() -> dict:
 
 async def _crates_keywords() -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{CRATES_API}/keywords",
-                            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        c = get_http_client()
+        r = await c.get(f"{CRATES_API}/keywords",
+                        headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"crates.io keywords: {r.status_code}"}
         data = r.json()

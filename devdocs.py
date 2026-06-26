@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import httpx
 
-from config import DEVDOCS_API
+from config import DEVDOCS_API, get_http_client
 
 
 async def devdocs_list_docs() -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{DEVDOCS_API}/docs.json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{DEVDOCS_API}/docs.json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"DevDocs: {r.status_code}"}
         docs = r.json()
@@ -20,9 +20,9 @@ async def devdocs_list_docs() -> dict:
 
 async def devdocs_fetch(slug: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
         data = r.json()
@@ -41,9 +41,9 @@ async def devdocs_fetch(slug: str) -> dict:
 
 async def devdocs_fetch_content(slug: str, path: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{DEVDOCS_API}/{slug}/db.json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{DEVDOCS_API}/{slug}/db.json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
         db = r.json()
@@ -59,9 +59,9 @@ async def devdocs_fetch_content(slug: str, path: str) -> dict:
 
 async def devdocs_search(slug: str, query: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
         data = r.json()
@@ -83,9 +83,9 @@ async def devdocs_search(slug: str, query: str) -> dict:
 
 async def devdocs_meta(slug: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{DEVDOCS_API}/{slug}/meta.json",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{DEVDOCS_API}/{slug}/meta.json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"DevDocs meta: HTTP {r.status_code}"}
         return {"success": True, "slug": slug, "meta": r.json()}

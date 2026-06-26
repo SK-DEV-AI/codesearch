@@ -7,6 +7,28 @@ from typing import Any
 
 import httpx
 
+# ── Shared HTTP Client Pool ──────────────────────────────────────────────────
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """Return a shared httpx.AsyncClient with connection pooling."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _http_client
+
+
+async def close_http_client():
+    """Shut down the shared HTTP client. Call on server exit."""
+    global _http_client
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+
 
 class _KeyRotator:
     """Thread-safe round-robin key rotator for API keys."""
@@ -86,42 +108,43 @@ HN_API = "https://hn.algolia.com/api/v1"
 async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
     """HTTP request with automatic retry on transient failures."""
     retries = kwargs.pop("retries", 2)
-    timeout = kwargs.pop("timeout", 15)
+    kwargs.pop("timeout", None)
     last_err: Exception | None = None
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        for attempt in range(retries + 1):
-            try:
-                if method == "GET":
-                    return await c.get(url, **kwargs)
-                elif method == "POST":
-                    return await c.post(url, **kwargs)
-                elif method == "PUT":
-                    return await c.put(url, **kwargs)
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
-                last_err = e
-                if attempt < retries:
-                    await asyncio.sleep(1 * (attempt + 1))
+    c = get_http_client()
+    for attempt in range(retries + 1):
+        try:
+            if method == "GET":
+                return await c.get(url, **kwargs)
+            elif method == "POST":
+                return await c.post(url, **kwargs)
+            elif method == "PUT":
+                return await c.put(url, **kwargs)
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+            last_err = e
+            if attempt < retries:
+                await asyncio.sleep(1 * (attempt + 1))
     raise last_err or RuntimeError("HTTP request failed after retries")
 
 # ── TTL Cache ───────────────────────────────────────────────────────────────
 _cache: dict[str, tuple[float, Any]] = {}
 _MAX_CACHE = 500
 _CACHE_TTL = {"gh": 120, "c7": 300, "wiki": 600, "pkg": 60, "readme": 600, "emb": 600}
+_cache_lock = asyncio.Lock()
 
 
-def _cached(key: str) -> Any | None:
-    entry = _cache.get(key)
-    if entry and time.monotonic() - entry[0] < _CACHE_TTL.get(key.split(":")[0], 300):
-        return entry[1]
+async def _cached(key: str) -> Any | None:
+    async with _cache_lock:
+        entry = _cache.get(key)
+        if entry and time.monotonic() - entry[0] < _CACHE_TTL.get(key.split(":")[0], 300):
+            return entry[1]
     return None
 
 
-def _set_cache(key: str, val: Any):
-    _cache[key] = (time.monotonic(), val)
-    if len(_cache) > _MAX_CACHE:
-        now = time.monotonic()
-        # Evict oldest 25% when over capacity
-        sorted_keys = sorted(_cache, key=lambda k: _cache[k][0])
-        evict_count = max(1, len(sorted_keys) // 4)
-        for k in sorted_keys[:evict_count]:
-            _cache.pop(k, None)
+async def _set_cache(key: str, val: Any):
+    async with _cache_lock:
+        _cache[key] = (time.monotonic(), val)
+        if len(_cache) > _MAX_CACHE:
+            sorted_keys = sorted(_cache, key=lambda k: _cache[k][0])
+            evict_count = max(1, len(sorted_keys) // 4)
+            for k in sorted_keys[:evict_count]:
+                _cache.pop(k, None)

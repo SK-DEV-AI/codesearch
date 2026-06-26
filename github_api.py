@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key
+from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key, get_http_client
 
 logger = logging.getLogger("codesearch.github")
 
@@ -34,7 +34,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
                         merged: str = "", head: str = "", base: str = "",
                         review: str = "") -> dict:
     cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}
     try:
@@ -163,7 +163,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
                     "comments": item.get("comments", 0),
                     "user": item.get("user", {}).get("login", ""),
                 })
-        _set_cache(cache_key, results)
+        await _set_cache(cache_key, results)
         return {"success": True, "results": results, "total": data.get("total_count", 0)}
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
@@ -171,7 +171,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
 
 async def fetch_readme(owner: str, repo: str, branch: str = "") -> dict:
     cache_key = f"readme:{owner}:{repo}:{branch}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -185,7 +185,7 @@ async def fetch_readme(owner: str, repo: str, branch: str = "") -> dict:
         if r.status_code != 200:
             return {"success": False, "error": f"GitHub {r.status_code}"}
         result = {"success": True, "content": r.text[:15000], "repo": f"{owner}/{repo}"}
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -214,7 +214,7 @@ async def gh_get_contents(owner: str, repo: str, path: str = "", branch: str = "
 
 async def gh_get_languages(owner: str, repo: str) -> dict:
     cache_key = f"gh_lang:{owner}:{repo}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -222,7 +222,7 @@ async def gh_get_languages(owner: str, repo: str) -> dict:
         if r.status_code != 200:
             return {"success": False, "error": f"GitHub {r.status_code}"}
         result = {"success": True, "languages": r.json()}
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -230,7 +230,7 @@ async def gh_get_languages(owner: str, repo: str) -> dict:
 
 async def gh_get_topics(owner: str, repo: str) -> dict:
     cache_key = f"gh_topics:{owner}:{repo}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -240,7 +240,7 @@ async def gh_get_topics(owner: str, repo: str) -> dict:
         if r.status_code != 200:
             return {"success": False, "error": f"GitHub {r.status_code}"}
         result = {"success": True, "topics": r.json().get("names", [])}
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -248,7 +248,7 @@ async def gh_get_topics(owner: str, repo: str) -> dict:
 
 async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
     cache_key = f"gh_rel:{owner}:{repo}:{count}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -262,7 +262,7 @@ async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
                      "body": (rel.get("body") or "")[:500]}
                     for rel in items]
         result = {"success": True, "releases": results}
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}

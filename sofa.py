@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache
+from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client
 
 
 async def search_sofa(query: str, count: int = 5, content_type: str = "question",
@@ -11,19 +11,19 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
     if post_id:
         return await _sofa_get_post(post_id)
     cache_key = f"sofa:{query}:{count}:{content_type}:{page}:{steering}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     session_id = None
     try:
         if not SOFA_KEY:
             return {"success": False, "error": "SOFA_KEY not configured"}
-        async with httpx.AsyncClient(timeout=15) as c:
-            sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
-                "Authorization": f"Bearer {SOFA_KEY}",
-                "X-Sofa-Client-Name": "mcp-codesearch",
-                "X-Sofa-Model-Name": NV_EMBED_MODEL,
-            })
+        c = get_http_client()
+        sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
+            "Authorization": f"Bearer {SOFA_KEY}",
+            "X-Sofa-Client-Name": "mcp-codesearch",
+            "X-Sofa-Model-Name": NV_EMBED_MODEL,
+        })
         if sess_r.status_code != 201:
             return {"success": False, "error": f"SOFA session: HTTP {sess_r.status_code}"}
         session_id = sess_r.json()["session_id"]
@@ -33,10 +33,10 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
         }
         if steering:
             params["steering"] = steering
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{SOFA_BASE}/posts",
-                            params=params,
-                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        c = get_http_client()
+        r = await c.get(f"{SOFA_BASE}/posts",
+                        params=params,
+                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
         if r.status_code != 200:
             return {"success": False, "error": f"SOFA search: HTTP {r.status_code}"}
         data = r.json()
@@ -60,16 +60,16 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
             "steering": data.get("steering", ""),
             "total": data.get("total", len(results)),
         }
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
     finally:
         if session_id:
             try:
-                async with httpx.AsyncClient(timeout=5) as c:
-                    await c.delete(f"{SOFA_BASE}/sessions/{session_id}",
-                                   headers={"Authorization": f"Bearer {SOFA_KEY}"})
+                c = get_http_client()
+                await c.delete(f"{SOFA_BASE}/sessions/{session_id}",
+                               headers={"Authorization": f"Bearer {SOFA_KEY}"})
             except (httpx.HTTPError, ValueError):
                 pass
 
@@ -77,17 +77,17 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
 async def _sofa_get_post(post_id: str) -> dict:
     session_id = None
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
-                "Authorization": f"Bearer {SOFA_KEY}",
-                "X-Sofa-Client-Name": "mcp-codesearch",
-            })
+        c = get_http_client()
+        sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
+            "Authorization": f"Bearer {SOFA_KEY}",
+            "X-Sofa-Client-Name": "mcp-codesearch",
+        })
         if sess_r.status_code != 201:
             return {"success": False, "error": f"SOFA session: HTTP {sess_r.status_code}"}
         session_id = sess_r.json()["session_id"]
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
-                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        c = get_http_client()
+        r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
+                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
         if r.status_code != 200:
             return {"success": False, "error": f"SOFA post: HTTP {r.status_code}"}
         item = r.json()
@@ -106,8 +106,8 @@ async def _sofa_get_post(post_id: str) -> dict:
     finally:
         if session_id:
             try:
-                async with httpx.AsyncClient(timeout=5) as c:
-                    await c.delete(f"{SOFA_BASE}/sessions/{session_id}",
-                                   headers={"Authorization": f"Bearer {SOFA_KEY}"})
+                c = get_http_client()
+                await c.delete(f"{SOFA_BASE}/sessions/{session_id}",
+                               headers={"Authorization": f"Bearer {SOFA_KEY}"})
             except (httpx.HTTPError, ValueError):
                 pass

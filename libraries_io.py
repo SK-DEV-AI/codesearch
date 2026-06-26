@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key
+from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_client
 
 
 async def search_libraries_io(name: str, platform: str = "") -> dict:
@@ -13,38 +13,38 @@ async def search_libraries_io(name: str, platform: str = "") -> dict:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     cache_key = f"li:{name}:{platform}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
         platforms = [platform] if platform else ["npm", "pypi", "cargo"]
         results = {}
-        async with httpx.AsyncClient(timeout=15) as c:
-            for p in platforms:
-                r = await c.get(f"{LI_API}/{p}/{urllib.parse.quote(name)}", params={"api_key": li_key},
-                                headers={"User-Agent": "mcp-codesearch/1.0"})
-                if r.status_code == 200:
-                    d = r.json()
-                    results[p] = {
-                        "name": d.get("name", name),
-                        "version": d.get("latest_stable_release", d.get("latest_release_number", "")),
-                        "license": d.get("licenses", ""),
-                        "stars": d.get("stars", 0),
-                        "forks": d.get("forks", 0),
-                        "dependent_repos": d.get("dependent_repos_count", 0),
-                        "dependents": d.get("dependents_count", 0),
-                        "rank": d.get("rank", 0),
-                        "homepage": d.get("homepage", ""),
-                        "repository": d.get("repository_url", ""),
-                        "description": d.get("description", "")[:200],
-                        "language": d.get("language", ""),
-                        "keywords": d.get("keywords", []),
-                        "latest_release_date": d.get("latest_stable_release_published_at", ""),
-                    }
+        c = get_http_client()
+        for p in platforms:
+            r = await c.get(f"{LI_API}/{p}/{urllib.parse.quote(name)}", params={"api_key": li_key},
+                            headers={"User-Agent": "mcp-codesearch/1.0"})
+            if r.status_code == 200:
+                d = r.json()
+                results[p] = {
+                    "name": d.get("name", name),
+                    "version": d.get("latest_stable_release", d.get("latest_release_number", "")),
+                    "license": d.get("licenses", ""),
+                    "stars": d.get("stars", 0),
+                    "forks": d.get("forks", 0),
+                    "dependent_repos": d.get("dependent_repos_count", 0),
+                    "dependents": d.get("dependents_count", 0),
+                    "rank": d.get("rank", 0),
+                    "homepage": d.get("homepage", ""),
+                    "repository": d.get("repository_url", ""),
+                    "description": d.get("description", "")[:200],
+                    "language": d.get("language", ""),
+                    "keywords": d.get("keywords", []),
+                    "latest_release_date": d.get("latest_stable_release_published_at", ""),
+                }
         if not results:
             return {"success": False, "error": f"'{name}' not found on Libraries.io"}
         result: dict[str, Any] = {"success": True, "results": results}
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
@@ -57,7 +57,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     cache_key = f"li_search:{query}:{platform}:{sort}:{languages}:{licenses}:{keywords}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -72,8 +72,8 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
             params["licenses"] = licenses
         if keywords:
             params["keywords"] = keywords
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{LI_API}/search", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/search", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io search: {r.status_code}"}
         data = r.json()
@@ -91,7 +91,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
                 "forks": item.get("forks", 0),
                 "dependent_repos": item.get("dependent_repos_count", 0),
             })
-        _set_cache(cache_key, results)
+        await _set_cache(cache_key, results)
         return {"success": True, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -102,10 +102,10 @@ async def get_versions(platform: str, name: str) -> dict:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/versions",
-                            params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/versions",
+                        params={"api_key": li_key},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io versions: {r.status_code}"}
         data = r.json()
@@ -130,9 +130,9 @@ async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
         if version:
             url += f"/{urllib.parse.quote(version)}"
         url += "/dependencies"
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(url, params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(url, params={"api_key": li_key},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io dependencies: {r.status_code}"}
         data = r.json()
@@ -155,10 +155,10 @@ async def get_dependents(platform: str, name: str) -> dict:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/dependents",
-                            params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/{platform}/{urllib.parse.quote(name)}/dependents",
+                        params={"api_key": li_key},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io dependents: {r.status_code}"}
         data = r.json()
@@ -180,10 +180,10 @@ async def get_github_repo(owner: str, repo: str) -> dict:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}",
-                            params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}",
+                        params={"api_key": li_key},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io github: {r.status_code}"}
         d = r.json()
@@ -210,10 +210,10 @@ async def get_github_dependencies(owner: str, repo: str) -> dict:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}/dependencies",
-                            params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/github/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}/dependencies",
+                        params={"api_key": li_key},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Libraries.io github deps: {r.status_code}"}
         data = r.json()

@@ -11,7 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, _next_fc_key, _next_tv_key, FIRECRAWL_SEARCH, TAVILY_SEARCH
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, _next_fc_key, _next_tv_key, FIRECRAWL_SEARCH, TAVILY_SEARCH, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt
@@ -102,7 +102,6 @@ async def handle_list_tools() -> list[Tool]:
                     "stars": {"type": "string"},
                     "forks": {"type": "string"},
                     "topics": {"type": "string"},
-                    "page": {"type": "integer", "default": 1},
                     "in_qualifier": {"type": "string", "description": "in: qualifier, e.g. 'name,readme,description'"},
                     "exclude_qualifier": {"type": "string", "description": "NOT qualifier, e.g. 'language:javascript'"},
                     "merged": {"type": "string"},
@@ -143,7 +142,6 @@ async def handle_list_tools() -> list[Tool]:
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
-                    "deadline": {"type": "integer", "default": 30, "description": "Max seconds to wait for sources (default 30, max 120)"},
                 },
                 "required": ["query"],
             },
@@ -172,18 +170,13 @@ async def handle_list_tools() -> list[Tool]:
                     "count": {"type": "integer", "default": 5},
                     "tags": {"type": "string"},
                     "accepted": {"type": "boolean"},
-                    "fromdate": {"type": "string"},
-                    "todate": {"type": "string"},
                     "closed": {"type": "boolean"},
                     "sort": {"type": "string", "default": "relevance"},
-                    "views": {"type": "integer", "default": 0},
-                    "answers": {"type": "integer", "default": 0},
                     "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis", "questions_by_ids", "search_users", "search_tags", "question_comments"]},
                     "site": {"type": "string", "default": "stackoverflow"},
                     "question_id": {"type": "integer"},
                     "ids": {"type": "string", "description": "Comma-separated question IDs for questions_by_ids"},
                     "content_type": {"type": "string", "enum": ["question", "til", "blueprint"]},
-                    "page": {"type": "integer", "default": 1},
                     "post_id": {"type": "string"},
                     "steering": {"type": "string"},
                     "filter": {"type": "string", "description": "SE API filter (default: withbody)"},
@@ -207,8 +200,6 @@ async def handle_list_tools() -> list[Tool]:
                     "after": {"type": "integer"},
                     "item_id": {"type": "integer"},
                     "firebase_type": {"type": "string"},
-                    "page": {"type": "integer", "default": 0},
-                    "hits_per_page": {"type": "integer", "default": 20},
                     "username": {"type": "string"},
                 },
                 "required": [],
@@ -223,7 +214,6 @@ async def handle_list_tools() -> list[Tool]:
                     "name": {"type": "string"},
                     "platform": {"type": "string", "default": ""},
                     "query": {"type": "string"},
-                    "sort": {"type": "string"},
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
@@ -262,7 +252,6 @@ async def handle_list_tools() -> list[Tool]:
                     "action": {"type": "string", "enum": ["readme", "contents", "languages", "topics", "releases"]},
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
-                    "branch": {"type": "string"},
                     "path": {"type": "string"},
                     "count": {"type": "integer", "default": 5},
                 },
@@ -296,11 +285,10 @@ async def handle_list_tools() -> list[Tool]:
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
                     "author_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 10},
+                    "count": {"type": "integer", "default": 10},
                     "year": {"type": "string"},
                     "fields_of_study": {"type": "string"},
                     "open_access": {"type": "boolean"},
-                    "offset": {"type": "integer", "default": 0},
                 },
                 "required": ["action"],
             },
@@ -532,8 +520,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     min_comments=int(arguments.get("min_comments", 0)),
                     before=int(arguments.get("before", 0)),
                     after=int(arguments.get("after", 0)),
-                    page=int(arguments.get("page", 0)),
-                    hits_per_page=int(arguments.get("hits_per_page", 20)),
                 )
             else:
                 return _res({"error": f"unknown hn action: {action}"}, False)
@@ -703,10 +689,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 body = {"query": code_q, "limit": 10, "categories": ["github"],
                         "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": True}}
                 try:
-                    async with httpx.AsyncClient(timeout=15) as c:
-                        r = await c.post(FIRECRAWL_SEARCH, json=body,
-                                         headers={"Authorization": f"Bearer {key}",
-                                                  "Content-Type": "application/json"})
+                    c = get_http_client()
+                    r = await c.post(FIRECRAWL_SEARCH, json=body,
+                                     headers={"Authorization": f"Bearer {key}",
+                                              "Content-Type": "application/json"})
                     if r.status_code != 200:
                         return {"success": False, "results": []}
                     data = r.json()
@@ -723,11 +709,11 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 if not key:
                     return {"success": False, "results": []}
                 try:
-                    async with httpx.AsyncClient(timeout=15) as c:
-                        r = await c.post(TAVILY_SEARCH,
-                            json={"query": code_q, "search_depth": "basic", "max_results": 5,
-                                  "include_answer": False, "topic": "general"},
-                            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+                    c = get_http_client()
+                    r = await c.post(TAVILY_SEARCH,
+                        json={"query": code_q, "search_depth": "basic", "max_results": 5,
+                              "include_answer": False, "topic": "general"},
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
                     if r.status_code != 200:
                         return {"success": False, "results": []}
                     data = r.json()
@@ -751,8 +737,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 async def _run(task):
                     async with sem:
                         return await task
-                wrapped = [_run(t) for t in tks]
-                done, pending = await asyncio.wait(wrapped, timeout=dl, return_when=asyncio.FIRST_COMPLETED)
+                wrapped = [asyncio.ensure_future(_run(t)) for t in tks]
+                done, pending = await asyncio.wait(wrapped, timeout=dl)
                 for p in pending:
                     p.cancel()
                 res = {}
@@ -869,34 +855,33 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action == "citations":
                 r = await get_paper_citations(
                     paper_id=str(arguments.get("paper_id", "")),
-                    limit=int(arguments.get("limit", 20)))
+                    limit=int(arguments.get("count", 20)))
             elif action == "references":
                 r = await get_paper_references(
                     paper_id=str(arguments.get("paper_id", "")),
-                    limit=int(arguments.get("limit", 20)))
+                    limit=int(arguments.get("count", 20)))
             elif action == "recommendations":
                 r = await get_paper_recommendations(
                     paper_id=str(arguments.get("paper_id", "")),
-                    limit=int(arguments.get("limit", 10)))
+                    limit=int(arguments.get("count", 10)))
             elif action == "author_search":
                 r = await search_authors(
                     query=str(arguments.get("query", "")),
-                    limit=int(arguments.get("limit", 10)))
+                    limit=int(arguments.get("count", 10)))
             elif action == "author_papers":
                 r = await get_author_papers(
                     author_id=str(arguments.get("author_id", "")),
-                    limit=int(arguments.get("limit", 10)))
+                    limit=int(arguments.get("count", 10)))
             elif action == "autocomplete":
                 r = await autocomplete_papers(
                     query=str(arguments.get("query", "")))
             else:
                 r = await search_papers(
                     query=str(arguments.get("query", "")),
-                    limit=int(arguments.get("limit", 10)),
+                    limit=int(arguments.get("count", 10)),
                     year=str(arguments.get("year", "")),
                     fields_of_study=str(arguments.get("fields_of_study", "")),
                     open_access=bool(arguments.get("open_access", False)),
-                    offset=int(arguments.get("offset", 0)),
                 )
             return _res(r, r.get("success", False))
 
@@ -926,8 +911,11 @@ async def _warmup_reranker():
 async def main():
     global _warmup_task
     _warmup_task = asyncio.create_task(_warmup_reranker())
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    finally:
+        await close_http_client()
 
 
 if __name__ == "__main__":

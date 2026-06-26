@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import _cached, _set_cache
+from config import _cached, _set_cache, get_http_client
 
 HN_ALGOLIA = "https://hn.algolia.com/api/v1"
 HN_FIREBASE = "https://hacker-news.firebaseio.com/v0"
@@ -16,7 +16,7 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
                     before: int = 0, after: int = 0,
                     page: int = 0, hits_per_page: int = 20) -> dict:
     cache_key = f"hn:{query}:{count}:{sort_by_date}:{tags}:{min_points}:{min_comments}:{before}:{after}:{page}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -38,8 +38,8 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
         }
         if filters:
             params["numericFilters"] = ",".join(filters)
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(endpoint, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(endpoint, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Algolia: {r.status_code}"}
         data = r.json()
@@ -55,7 +55,7 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
                 "created_at": hit.get("created_at", ""),
                 "object_id": hit.get("objectID", ""),
             })
-        _set_cache(cache_key, results)
+        await _set_cache(cache_key, results)
         return {"success": True, "results": results, "total": data.get("nbHits", 0),
                 "page": data.get("page", 0), "nb_pages": data.get("nbPages", 0)}
     except (httpx.HTTPError, ValueError) as e:
@@ -64,9 +64,9 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
 
 async def hn_get_item(item_id: int) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{HN_ALGOLIA}/items/{item_id}",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{HN_ALGOLIA}/items/{item_id}",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Algolia: {r.status_code}"}
         data = r.json()
@@ -89,8 +89,8 @@ async def hn_firebase_stories(story_type: str = "top", count: int = 10) -> dict:
                    "ask": "askstories", "show": "showstories"}
     fb_key = valid_types.get(story_type, "topstories")
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{HN_FIREBASE}/{fb_key}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{HN_FIREBASE}/{fb_key}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Firebase: {r.status_code}"}
         ids = (r.json() or [])[:count]
@@ -115,11 +115,11 @@ async def hn_firebase_stories(story_type: str = "top", count: int = 10) -> dict:
             return None
 
         sem = asyncio.Semaphore(5)
-        async with httpx.AsyncClient(timeout=10) as c:
-            async def _limited_fetch(cid: int):
-                async with sem:
-                    return await _fetch_item(cid, c)
-            fetched = await asyncio.gather(*[_limited_fetch(cid) for cid in ids], return_exceptions=True)
+        c = get_http_client()
+        async def _limited_fetch(cid: int):
+            async with sem:
+                return await _fetch_item(cid, c)
+        fetched = await asyncio.gather(*[_limited_fetch(cid) for cid in ids], return_exceptions=True)
         results = [r for r in fetched if isinstance(r, dict)]
         return {"success": True, "type": story_type, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
@@ -128,8 +128,8 @@ async def hn_firebase_stories(story_type: str = "top", count: int = 10) -> dict:
 
 async def hn_get_user(username: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{HN_FIREBASE}/user/{username}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{HN_FIREBASE}/user/{username}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"Firebase user: {r.status_code}"}
         data = r.json()

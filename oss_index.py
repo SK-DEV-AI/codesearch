@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from config import GUIDE_API, OSS_API, OSS_TOKEN, _cached, _set_cache, _next_oss_key
+from config import GUIDE_API, OSS_API, OSS_TOKEN, _cached, _set_cache, _next_oss_key, get_http_client
 
 
 async def scan_vulnerabilities(platform: str, name: str, version: str = "",
@@ -20,13 +20,13 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
             purl += f"@{version}"
         purls = [purl]
     cache_key = f"oss:{','.join(purls)}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(OSS_API, json={"coordinates": purls},
-                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        c = get_http_client()
+        r = await c.post(OSS_API, json={"coordinates": purls},
+                         headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"Sonatype Guide: {r.status_code}"}
         data = r.json()
@@ -54,7 +54,7 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
                 "patched_versions": comp.get("patchedVersions", ""),
                 "licenses": comp.get("licenses", ""),
             })
-        _set_cache(cache_key, reports)
+        await _set_cache(cache_key, reports)
         return {"success": True, "reports": reports}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -67,13 +67,13 @@ async def get_vulnerability_detail(vuln_id: str) -> dict:
     if not vuln_id:
         return {"success": False, "error": "vuln_id required"}
     cache_key = f"vuln:{vuln_id}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{GUIDE_API}/vulnerabilities/{vuln_id}",
-                            headers={"Authorization": f"Bearer {oss_key}"})
+        c = get_http_client()
+        r = await c.get(f"{GUIDE_API}/vulnerabilities/{vuln_id}",
+                        headers={"Authorization": f"Bearer {oss_key}"})
         if r.status_code == 404:
             return {"success": False, "error": "Vulnerability not found"}
         if r.status_code != 200:
@@ -91,7 +91,7 @@ async def get_vulnerability_detail(vuln_id: str) -> dict:
             "reference": data.get("reference", ""),
             "external_references": data.get("externalReferences", []),
         }
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return {"success": True, "vulnerability": result}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -104,14 +104,14 @@ async def get_component_latest_version(purl: str) -> dict:
     if not purl:
         return {"success": False, "error": "purl required"}
     cache_key = f"latest:{purl}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{GUIDE_API}/components/latest-version",
-                             json={"purl": purl},
-                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        c = get_http_client()
+        r = await c.post(f"{GUIDE_API}/components/latest-version",
+                         json={"purl": purl},
+                         headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"Guide API: {r.status_code}"}
         data = r.json()
@@ -121,7 +121,7 @@ async def get_component_latest_version(purl: str) -> dict:
             "package_name": data.get("packageName", ""),
             "ecosystem": data.get("ecosystem", ""),
         }
-        _set_cache(cache_key, result)
+        await _set_cache(cache_key, result)
         return {"success": True, "result": result}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -132,10 +132,10 @@ async def search_vulnerabilities(keyword: str, limit: int = 10) -> dict:
         return {"success": False, "error": "OSS_TOKEN not configured"}
     oss_key = await _next_oss_key()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(f"{GUIDE_API}/security-data/packages",
-                            params={"q": keyword, "limit": min(limit, 50)},
-                            headers={"Authorization": f"Bearer {oss_key}"})
+        c = get_http_client()
+        r = await c.get(f"{GUIDE_API}/security-data/packages",
+                        params={"q": keyword, "limit": min(limit, 50)},
+                        headers={"Authorization": f"Bearer {oss_key}"})
         if r.status_code != 200:
             return {"success": False, "error": f"Guide security-data: {r.status_code}"}
         data = r.json()
@@ -159,10 +159,10 @@ async def analyze_license(purl: str) -> dict:
     if not purl:
         return {"success": False, "error": "purl required"}
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{GUIDE_API}/license-analysis",
-                             json={"purls": [purl]},
-                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        c = get_http_client()
+        r = await c.post(f"{GUIDE_API}/license-analysis",
+                         json={"purls": [purl]},
+                         headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"Guide license-analysis: {r.status_code}"}
         data = r.json()
@@ -187,10 +187,10 @@ async def quick_component_report(purl: str) -> dict:
     if not purl:
         return {"success": False, "error": "purl required"}
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{OSS_API}/quick",
-                             json={"coordinates": [purl]},
-                             headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
+        c = get_http_client()
+        r = await c.post(f"{OSS_API}/quick",
+                         json={"coordinates": [purl]},
+                         headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
             return {"success": False, "error": f"Guide component-report/quick: {r.status_code}"}
         data = r.json()

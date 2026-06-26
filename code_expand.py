@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from config import _KeyRotator
+from config import _KeyRotator, get_http_client
 
 _groq_rotator = _KeyRotator("GROQ_API_KEYS")
 _next_key = _groq_rotator.next
@@ -58,17 +58,17 @@ async def expand_code_query(query: str) -> list[str]:
 
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={
-                    "model": "openai/gpt-oss-20b",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
-                    "max_tokens": 150,
-                },
-            )
+        c = get_http_client()
+        r = await c.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": "openai/gpt-oss-20b",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": 150,
+            },
+        )
         if r.status_code == 200:
             text = r.json()["choices"][0]["message"]["content"].strip()
             lines = []

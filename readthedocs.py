@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from config import _cached, _set_cache
+from config import _cached, _set_cache, get_http_client
 
 RTD_API = "https://readthedocs.org/api/v3"
 
@@ -12,7 +12,7 @@ RTD_API = "https://readthedocs.org/api/v3"
 async def search_readthedocs(project: str, query: str, version: str = "",
                              page: int = 1, page_size: int = 10) -> dict:
     cache_key = f"rtd:{project}:{query}:{version}:{page}"
-    cached = _cached(cache_key)
+    cached = await _cached(cache_key)
     if cached is not None:
         return cached
     try:
@@ -22,9 +22,9 @@ async def search_readthedocs(project: str, query: str, version: str = "",
         elif project:
             q = f"project:{project} {query}"
         params: dict[str, Any] = {"q": q, "page": page, "page_size": min(page_size, 50)}
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/search/", params=params,
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/search/", params=params,
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
         data = r.json()
@@ -40,7 +40,7 @@ async def search_readthedocs(project: str, query: str, version: str = "",
                 "content": (hit.get("highlight", "") or "")[:1500],
                 "blocks": hit.get("blocks", []),
             })
-        _set_cache(cache_key, results)
+        await _set_cache(cache_key, results)
         return {"success": True, "results": results, "total": data.get("count", len(results)),
                 "page": page, "page_size": page_size}
     except (httpx.HTTPError, ValueError) as e:
@@ -49,9 +49,9 @@ async def search_readthedocs(project: str, query: str, version: str = "",
 
 async def readthedocs_project_info(project: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/projects/{project}/",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{project}/",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
         d = r.json()
@@ -75,9 +75,9 @@ async def readthedocs_project_info(project: str) -> dict:
 
 async def readthedocs_versions(project: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/projects/{project}/versions/",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{project}/versions/",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
         data = r.json()
@@ -98,9 +98,9 @@ async def readthedocs_versions(project: str) -> dict:
 
 async def readthedocs_translations(project: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/projects/{project}/translations/",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{project}/translations/",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs translations: {r.status_code}"}
         data = r.json()
@@ -119,9 +119,9 @@ async def readthedocs_translations(project: str) -> dict:
 
 async def readthedocs_subprojects(project: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/projects/{project}/subprojects/",
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{project}/subprojects/",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs subprojects: {r.status_code}"}
         data = r.json()
@@ -140,10 +140,10 @@ async def readthedocs_subprojects(project: str) -> dict:
 
 async def readthedocs_builds(project: str, limit: int = 10) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-            r = await c.get(f"{RTD_API}/projects/{project}/builds/",
-                            params={"limit": min(limit, 50)},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{project}/builds/",
+                        params={"limit": min(limit, 50)},
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"ReadTheDocs builds: {r.status_code}"}
         data = r.json()

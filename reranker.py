@@ -7,6 +7,7 @@ Features:
 """
 
 import asyncio
+import atexit
 import json
 import os
 import logging
@@ -19,6 +20,8 @@ _PROC = None
 _LOCK = asyncio.Lock()
 _START_ATTEMPTS = 0
 _MAX_START_ATTEMPTS = 3
+
+atexit.register(lambda: _PROC.kill() if _PROC and _PROC.returncode is None else None)
 
 
 async def _start_worker():

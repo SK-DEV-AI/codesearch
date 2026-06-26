@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 
 import httpx
 
-from config import NV_BASE, NV_EMBED_MODEL, NV_KEY, _cached, _set_cache, _KeyRotator
+from config import NV_BASE, NV_EMBED_MODEL, NV_KEY, _cached, _set_cache, _KeyRotator, get_http_client
 
 _nv_rotator = _KeyRotator("NV_KEY")
 _next_nv_key = _nv_rotator.next
@@ -21,7 +21,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
     uncached_idx = []
     for i, t in enumerate(texts):
         k = f"emb:{input_type}:{t[:200]}"
-        c = _cached(k)
+        c = await _cached(k)
         if c is not None:
             results[i] = c
         else:
@@ -30,11 +30,11 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
     if uncached:
         nv_key = await _next_nv_key()
         try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.post(f"{NV_BASE}/embeddings", json={
-                    "model": NV_EMBED_MODEL, "input": uncached, "input_type": input_type, "encoding_format": "float",
-                    "truncate": "END",
-                }, headers={"Authorization": f"Bearer {nv_key}"})
+            c = get_http_client()
+            r = await c.post(f"{NV_BASE}/embeddings", json={
+                "model": NV_EMBED_MODEL, "input": uncached, "input_type": input_type, "encoding_format": "float",
+                "truncate": "END",
+            }, headers={"Authorization": f"Bearer {nv_key}"})
             if r.status_code == 200:
                 data = r.json()
                 for idx, row in zip(range(len(uncached)), data.get("data", [])):
@@ -42,7 +42,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                     if emb:
                         orig_idx = uncached_idx[idx]
                         results[orig_idx] = emb
-                        _set_cache(f"emb:{input_type}:{uncached[idx][:200]}", emb)
+                        await _set_cache(f"emb:{input_type}:{uncached[idx][:200]}", emb)
         except (httpx.HTTPError, ValueError, KeyError):
             pass
     final = [r for r in results if r is not None]
