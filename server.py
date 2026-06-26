@@ -757,7 +757,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             results = await _gather_with_deadline(tasks, task_names, deadline)
             merged: dict[str, Any] = {}
             flat_items: list[dict] = []
-            for name_, result in zip(task_names, results):
+            for name_, result in results.items():
                 if isinstance(result, BaseException):
                     continue
                 if not isinstance(result, dict) or not result.get("success"):
