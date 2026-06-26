@@ -35,6 +35,8 @@ from semantic_scholar import (search_papers, get_paper_details,
                                get_papers_batch, get_paper_citations,
                                get_paper_references, get_paper_recommendations,
                                search_authors, get_author_papers, autocomplete_papers)
+from core_api import search_core_works, CORE_API_AVAILABLE
+from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info
 from reranker import rerank as _rerank
 
 server = Server("codesearch")
@@ -154,7 +156,8 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions"},
+                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|depsdev_dependencies|depsdev_info"},
+                    "version": {"type": "string", "description": "Package version (required for depsdev_dependencies)"},
                 },
                 "required": ["name"],
             },
@@ -280,7 +283,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
@@ -289,6 +292,7 @@ async def handle_list_tools() -> list[Tool]:
                     "year": {"type": "string"},
                     "fields_of_study": {"type": "string"},
                     "open_access": {"type": "boolean"},
+                    "offset": {"type": "integer", "default": 0},
                 },
                 "required": ["action"],
             },
@@ -441,11 +445,24 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 return _res({"error": f"unknown wiki action: {action}"}, False)
 
         elif name == "search_package":
-            r = await search_package(
-                name=str(arguments.get("name", "")),
-                registry=str(arguments.get("registry", "auto")),
-                type=str(arguments.get("type", "")),
-            )
+            pkg_type = str(arguments.get("type", ""))
+            pkg_name = str(arguments.get("name", ""))
+            if pkg_type == "depsdev_dependencies":
+                parts = pkg_name.split("/", 1)
+                system = parts[0] if len(parts) > 1 else "npm"
+                pkg = parts[1] if len(parts) > 1 else pkg_name
+                r = await get_resolved_dependencies(system, pkg, str(arguments.get("version", "")))
+            elif pkg_type == "depsdev_info":
+                parts = pkg_name.split("/", 1)
+                system = parts[0] if len(parts) > 1 else "npm"
+                pkg = parts[1] if len(parts) > 1 else pkg_name
+                r = await get_depsdev_package_info(system, pkg)
+            else:
+                r = await search_package(
+                    name=pkg_name,
+                    registry=str(arguments.get("registry", "auto")),
+                    type=pkg_type,
+                )
             return _res(r, r.get("success", False))
 
         elif name == "so_search":
@@ -682,6 +699,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(search_papers(query, 5))
             task_names.append("s2_papers")
 
+            if CORE_API_AVAILABLE:
+                tasks.append(search_core_works(query, 5))
+                task_names.append("core_papers")
+
             async def _firecrawl():
                 key = await _next_fc_key()
                 if not key:
@@ -815,6 +836,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     merged["semantic_scholar"] = result.get("results", [])
                     for pr in (result.get("results", []) or []):
                         flat_items.append({"source": "semantic_scholar", "title": pr.get("title", ""), "text": pr.get("abstract", ""), "url": pr.get("url", "")})
+                elif name_ == "core_papers":
+                    merged["core_papers"] = result.get("results", [])
+                    for cr in (result.get("results", []) or []):
+                        flat_items.append({"source": "core", "title": cr.get("title", ""), "text": cr.get("abstract", ""), "url": cr.get("downloadUrl", "") or ""})
                 elif name_ == "firecrawl_github":
                     merged["firecrawl_github"] = result.get("results", [])
                     for fr in (result.get("results", []) or []):
@@ -852,6 +877,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 raw = str(arguments.get("paper_ids", ""))
                 ids = [x.strip() for x in raw.split(",") if x.strip()]
                 r = await get_papers_batch(ids)
+            elif action == "core_search":
+                r = await search_core_works(query=str(arguments.get("query", "")),
+                    limit=int(arguments.get("count", 10)),
+                    offset=int(arguments.get("offset", 0)))
             elif action == "citations":
                 r = await get_paper_citations(
                     paper_id=str(arguments.get("paper_id", "")),
