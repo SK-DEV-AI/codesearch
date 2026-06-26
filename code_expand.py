@@ -42,17 +42,9 @@ async def expand_code_query(query: str) -> list[str]:
     lang_hint = "code and programming" if has_code else "developer tools and libraries"
 
     prompt = (
-        f"You are a code search optimizer. Given a {lang_hint} query, generate "
-        "2-3 alternative search queries that capture different angles:\n"
-        "- One with specific API/library function names (e.g. 'dict.get()' for 'safe dictionary access')\n"
-        "- One with the most common/widely-used library or framework for this task\n"
-        "- One with minimal/broad terms for maximum recall\n\n"
-        "Rules:\n"
-        "- Keep each query under 80 chars\n"
-        "- Do NOT include the original query\n"
-        "- One query per line, plain text\n"
-        "- Do NOT number or prefix\n"
-        "- Be specific — prefer 'parse json in rust serde_json' over 'how to parse json'\n\n"
+        f"Given a {lang_hint} query, output exactly 2 alternative keyword-only "
+        "search queries. Each query is one line of 3-6 keywords. "
+        "No questions. No sentences. No numbering. No prefixes. No explanation.\n\n"
         f"Query: {stripped}"
     )
 
@@ -63,10 +55,13 @@ async def expand_code_query(query: str) -> list[str]:
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={
-                "model": "openai/gpt-oss-20b",
-                "messages": [{"role": "user", "content": prompt}],
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": "Generate exactly 2 keyword-only search queries from the user's input. One query per line. No numbering. No prefixes. No explanations."},
+                    {"role": "user", "content": prompt},
+                ],
                 "temperature": 0.7,
-                "max_tokens": 150,
+                "max_tokens": 128,
             },
         )
         if r.status_code == 200:
