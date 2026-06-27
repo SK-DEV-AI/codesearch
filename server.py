@@ -11,7 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, _next_fc_key, _next_tv_key, FIRECRAWL_SEARCH, TAVILY_SEARCH, close_http_client, get_http_client
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, _next_tv_key, TAVILY_SEARCH, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt
@@ -704,28 +704,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 tasks.append(search_core_works(query, cnt))
                 task_names.append("core_papers")
 
-            async def _firecrawl():
-                key = await _next_fc_key()
-                if not key:
-                    return {"success": False, "results": []}
-                body = {"query": code_q, "limit": cnt, "categories": ["github"],
-                        "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": True}}
-                try:
-                    c = get_http_client()
-                    r = await c.post(FIRECRAWL_SEARCH, json=body,
-                                     headers={"Authorization": f"Bearer {key}",
-                                              "Content-Type": "application/json"})
-                    if r.status_code != 200:
-                        return {"success": False, "results": []}
-                    data = r.json()
-                    results = []
-                    for item in (data.get("data", {}).get("web", []) or []):
-                        results.append({"full_name": item.get("title","")[:120], "url": item.get("url",""),
-                                        "snippet": (item.get("markdown","") or item.get("description",""))[:300]})
-                    return {"success": True, "results": results}
-                except Exception:
-                    return {"success": False, "results": []}
-
             async def _tavily():
                 key = await _next_tv_key()
                 if not key:
@@ -747,8 +725,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 except Exception:
                     return {"success": False, "results": []}
 
-            tasks.append(_firecrawl())
-            task_names.append("firecrawl_github")
             tasks.append(_tavily())
             task_names.append("tavily")
 
@@ -841,10 +817,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     merged["core_papers"] = result.get("results", [])
                     for cr in (result.get("results", []) or []):
                         flat_items.append({"source": "core", "title": cr.get("title", ""), "text": cr.get("abstract", ""), "url": cr.get("downloadUrl", "") or ""})
-                elif name_ == "firecrawl_github":
-                    merged["firecrawl_github"] = result.get("results", [])
-                    for fr in (result.get("results", []) or []):
-                        flat_items.append({"source": "firecrawl_github", "title": fr.get("title", fr.get("full_name", "")), "text": fr.get("snippet", ""), "url": fr.get("url", "")})
                 elif name_ == "tavily":
                     merged["tavily"] = result.get("results", [])
                     for tr in (result.get("results", []) or []):

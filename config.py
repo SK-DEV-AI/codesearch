@@ -85,8 +85,6 @@ _next_oss_key = _oss_rotator.next
 OSS_TOKEN = _oss_rotator.first
 OSS_API = "https://api.guide.sonatype.com/api/v3/component-report"
 
-_fc_rotator = _KeyRotator("FIRECRAWL_KEY", "FIRECRAWL_KEYS")
-_next_fc_key = _fc_rotator.next
 
 _tv_rotator = _KeyRotator("TAVILY_KEY", "TAVILY_KEYS")
 _next_tv_key = _tv_rotator.next
@@ -100,7 +98,6 @@ REGISTRIES = {
 CRATES_SEARCH = "https://crates.io/api/v1/crates"
 NPM_SEARCH = "https://registry.npmjs.org/-/v1/search"
 DEVDOCS_API = "https://docs.devdocs.io"
-FIRECRAWL_SEARCH = "https://api.firecrawl.dev/v2/search"
 TAVILY_SEARCH = "https://api.tavily.com/search"
 HN_API = "https://hn.algolia.com/api/v1"
 
