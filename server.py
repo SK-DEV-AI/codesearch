@@ -37,6 +37,7 @@ from semantic_scholar import (search_papers, get_paper_details,
                                search_authors, get_author_papers, autocomplete_papers)
 from core_api import search_core_works, CORE_API_AVAILABLE
 from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info
+from config import get_http_client
 from reranker import rerank as _rerank
 
 server = Server("codesearch")
@@ -280,11 +281,11 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="papers",
-            description="Semantic Scholar: search, details, batch, citations, references, recommendations, author search, author papers, or autocomplete.",
+            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "arxiv_search"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
@@ -877,6 +878,49 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action == "autocomplete":
                 r = await autocomplete_papers(
                     query=str(arguments.get("query", "")))
+            elif action == "arxiv_search":
+                c = get_http_client()
+                from urllib.parse import urlencode
+                query = str(arguments.get("query", ""))
+                count = min(int(arguments.get("count", 10)), 50)
+                params = {"search_query": f"all:{query}", "max_results": count,
+                          "sortBy": "relevance", "sortOrder": "descending"}
+                import xml.etree.ElementTree as ET
+                try:
+                    resp = await c.get("https://export.arxiv.org/api/query",
+                                       params=params, timeout=15)
+                    if resp.status_code == 200:
+                        papers = []
+                        root = ET.fromstring(resp.content)
+                        ns = {"a": "http://www.w3.org/2005/Atom",
+                              "arxiv": "http://arxiv.org/schemas/atom"}
+                        for entry in root.findall("a:entry", ns):
+                            pid = entry.find("a:id", ns)
+                            title = entry.find("a:title", ns)
+                            summary = entry.find("a:summary", ns)
+                            published = entry.find("a:published", ns)
+                            cats = [c.get("term", "") for c in entry.findall("arxiv:primary_category", ns)]
+                            authors = [a.find("a:name", ns).text if a.find("a:name", ns) is not None else ""
+                                       for a in entry.findall("a:author", ns)]
+                            pdf_link = ""
+                            for link in entry.findall("a:link", ns):
+                                if link.get("title") == "pdf":
+                                    pdf_link = link.get("href", "")
+                                    break
+                            papers.append({
+                                "paper_id": pid.text.strip().split("/")[-1] if pid is not None and pid.text else "",
+                                "title": title.text.strip() if title is not None and title.text else "",
+                                "summary": summary.text.strip()[:500] if summary is not None and summary.text else "",
+                                "published": published.text.strip()[:10] if published is not None and published.text else "",
+                                "authors": authors,
+                                "categories": cats,
+                                "pdf_url": pdf_link,
+                            })
+                        r = {"success": True, "total": len(papers), "papers": papers}
+                    else:
+                        r = {"success": False, "error": f"arXiv returned {resp.status_code}"}
+                except Exception as e:
+                    r = {"success": False, "error": str(e)}
             else:
                 r = await search_papers(
                     query=str(arguments.get("query", "")),
