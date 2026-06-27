@@ -5,7 +5,7 @@ Unified code search across 14+ sources with embedding dedup + cross-encoder rera
 ## Tools
 
 - **search_all** — Unified search across 14+ sources (GitHub, SO, HN, npm/crates/PyPI, Libraries.io, DevDocs, etc.)
-- **search_code** — GitHub code/repos/issues search with qualifiers
+- **github_search** — GitHub code/repos/issues search with qualifiers
 - **search_docs** — Library docs via Context7 → ReadTheDocs → llms.txt → DevDocs
 - **search_package** — Package metadata from npm/PyPI/crates
 - **so_search** — Stack Overflow via Stack Exchange API (free) or SOFA

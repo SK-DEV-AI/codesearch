@@ -78,7 +78,7 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="search_code",
+            name="github_search",
             description="GitHub code/repos/issues search with qualifiers.",
             inputSchema={
                 "type": "object",
@@ -371,10 +371,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 "success": False,
                 "source": "none",
                 "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
-                "hint": "Try search_code or wiki for this library",
+                "hint": "Try github_search or wiki for this library",
             })
 
-        elif name == "search_code":
+        elif name == "github_search":
             r = await search_github(
                 q=str(arguments.get("query", "")),
                 search_type=str(arguments.get("search_type", "code")),
