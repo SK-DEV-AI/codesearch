@@ -242,7 +242,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="docs",
-            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). Also direct DevDocs/ReadTheDocs access.",
+            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -595,7 +595,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     "success": False,
                     "source": "none",
                     "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
-                    "hint": "Try the wiki or github tool for this library",
+                    "hint": "Try wiki, github, or fetch(url) for this library",
                 })
             elif action == "devdocs_list":
                 r = await devdocs_list_docs()
