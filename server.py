@@ -211,6 +211,7 @@ async def handle_list_tools() -> list[Tool]:
                     "name": {"type": "string"},
                     "platform": {"type": "string", "default": ""},
                     "query": {"type": "string"},
+                    "sort": {"type": "string"},
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
