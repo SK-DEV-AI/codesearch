@@ -122,7 +122,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_all",
-            description="Unified search across 14+ sources with embedding dedup and reranking.",
+            description="Unified search across 15+ sources with embedding dedup and reranking.",
             inputSchema={
                 "type": "object",
                 "properties": {
