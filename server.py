@@ -64,7 +64,7 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="github",
-            description="GitHub operations: search code/repos/issues/users, repo readme/contents/languages/topics/releases.",
+            description="GitHub operations: search code/repos/issues/users, repo readme/contents/languages/topics/releases. Use start_line/end_line with contents action for targeted source reads.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -98,6 +98,8 @@ async def handle_list_tools() -> list[Tool]:
                     "base": {"type": "string"},
                     "review": {"type": "string"},
                     "page": {"type": "integer", "description": "Page number for pagination"},
+                    "start_line": {"type": "integer", "description": "1-based start line for contents action (slices file content by newline)"},
+                    "end_line": {"type": "integer", "description": "1-based end line (inclusive) for contents action"},
                 },
                 "required": ["action"],
             },
@@ -340,6 +342,18 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     repo=str(arguments.get("repo", "")),
                     path=str(arguments.get("path", "")),
                     branch=str(arguments.get("branch", "")))
+                if r.get("success") and r.get("content"):
+                    all_lines = r["content"].split("\n")
+                    r["total_lines"] = len(all_lines)
+                    r["total_chars"] = len(r["content"])
+                    start_line = int(arguments.get("start_line", 0))
+                    end_line = int(arguments.get("end_line", 0))
+                    if start_line > 0:
+                        if end_line > 0:
+                            r["content"] = "\n".join(all_lines[start_line - 1:end_line])
+                        else:
+                            r["content"] = "\n".join(all_lines[start_line - 1:])
+                        r["returned_lines"] = r["content"].count("\n") + 1
             elif action == "languages":
                 r = await gh_get_languages(owner=str(arguments.get("owner", "")),
                     repo=str(arguments.get("repo", "")))
