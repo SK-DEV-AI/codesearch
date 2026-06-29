@@ -11,7 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, _next_tv_key, TAVILY_SEARCH, close_http_client, get_http_client
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt
@@ -37,8 +37,8 @@ from semantic_scholar import (search_papers, get_paper_details,
                                search_authors, get_author_papers, autocomplete_papers)
 from core_api import search_core_works, CORE_API_AVAILABLE
 from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info
-from config import get_http_client
 from reranker import rerank as _rerank
+from tavily_search import tavily_search
 
 server = Server("codesearch")
 
@@ -63,26 +63,12 @@ def safe_float(v, default=0.0):
 async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
-            name="search_docs",
-            description="Library docs via context7, ReadTheDocs, llms.txt, or DevDocs. Returns candidates when ambiguous.",
+            name="github",
+            description="GitHub operations: search code/repos/issues/users, repo readme/contents/languages/topics/releases.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "library": {"type": "string"},
-                    "version": {"type": "string"},
-                    "library_id": {"type": "string", "description": "Context7 library ID (skip search)"},
-                    "fast": {"type": "boolean"},
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="github_search",
-            description="GitHub code/repos/issues search with qualifiers.",
-            inputSchema={
-                "type": "object",
-                "properties": {
+                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases"], "default": "search"},
                     "query": {"type": "string"},
                     "search_type": {"type": "string", "enum": ["code","repos","issues","users"], "default": "code"},
                     "owner": {"type": "string"},
@@ -105,14 +91,15 @@ async def handle_list_tools() -> list[Tool]:
                     "stars": {"type": "string"},
                     "forks": {"type": "string"},
                     "topics": {"type": "string"},
-                    "in_qualifier": {"type": "string", "description": "in: qualifier, e.g. 'name,readme,description'"},
-                    "exclude_qualifier": {"type": "string", "description": "NOT qualifier, e.g. 'language:javascript'"},
+                    "in_qualifier": {"type": "string"},
+                    "exclude_qualifier": {"type": "string"},
                     "merged": {"type": "string"},
                     "head": {"type": "string"},
                     "base": {"type": "string"},
                     "review": {"type": "string"},
+                    "page": {"type": "integer", "description": "Page number for pagination"},
                 },
-                "required": ["query"],
+                "required": ["action"],
             },
         ),
         Tool(
@@ -185,6 +172,11 @@ async def handle_list_tools() -> list[Tool]:
                     "post_id": {"type": "string"},
                     "steering": {"type": "string"},
                     "filter": {"type": "string", "description": "SE API filter (default: withbody)"},
+                    "page": {"type": "integer", "default": 1, "description": "Page number for pagination"},
+                    "fromdate": {"type": "string", "description": "Unix timestamp or date string for earliest creation date"},
+                    "todate": {"type": "string", "description": "Unix timestamp or date string for latest creation date"},
+                    "views": {"type": "integer", "default": 0, "description": "Minimum view count"},
+                    "answers": {"type": "integer", "default": 0, "description": "Minimum answer count"},
                 },
             },
         ),
@@ -249,34 +241,21 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="github",
-            description="GitHub repo operations: readme, contents, languages, topics, releases.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["readme", "contents", "languages", "topics", "releases"]},
-                    "owner": {"type": "string"},
-                    "repo": {"type": "string"},
-                    "path": {"type": "string"},
-                    "count": {"type": "integer", "default": 5},
-                },
-                "required": ["action", "owner", "repo"],
-            },
-        ),
-        Tool(
             name="docs",
-            description="DevDocs + ReadTheDocs operations.",
+            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). Also direct DevDocs/ReadTheDocs access.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"]},
-                    "slug": {"type": "string"},
+                    "action": {"type": "string", "enum": ["search", "devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"], "default": "search"},
                     "query": {"type": "string"},
+                    "library": {"type": "string"},
+                    "library_id": {"type": "string", "description": "Context7 library ID (skip search)"},
+                    "version": {"type": "string"},
+                    "fast": {"type": "boolean"},
+                    "slug": {"type": "string"},
                     "path": {"type": "string"},
                     "project": {"type": "string"},
-                    "version": {"type": "string"},
                 },
-                "required": ["action"],
             },
         ),
         Tool(
@@ -317,95 +296,61 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         )
 
     try:
-        if name == "search_docs":
-            query = str(arguments.get("query", ""))
-            library = str(arguments.get("library", "") or query.split()[0])
-            version = str(arguments.get("version", ""))
-            fast = bool(arguments.get("fast", False))
-            library_id = str(arguments.get("library_id", ""))
-            resolved = await context7_resolve(
-                library if library else query,
-                version=version, fast=fast, library_id=library_id,
-            )
-            if resolved.get("success"):
-                result = resolved["docs"]
-                result["resolved_library_id"] = resolved["library"]["id"]
-                if version:
-                    result["version_pinned"] = version
-                result["library"] = resolved["library"]
-                result["source"] = "context7"
-                if resolved.get("candidates"):
-                    result["candidates"] = resolved["candidates"]
-                return _res(result)
-            if resolved.get("candidates"):
-                return _res({
-                    "success": False,
-                    "source": "context7",
-                    "candidates": resolved["candidates"],
-                    "error": resolved.get("error", "ambiguous library"),
-                    "hint": "Use library_id param to pick the right library",
-                })
-            rtd = await search_readthedocs(library, query)
-            if rtd.get("success") and rtd.get("results"):
-                rtd["source"] = "readthedocs"
-                return _res(rtd)
-            base = library.lower().replace('_', '-').replace(' ', '-')
-            domains = [
-                f"{base}.dev", f"docs.{base}.io", f"{base}.readthedocs.io",
-                f"docs.{base}.org", f"{base}.docs.org", f"{base}.docs.dev", f"www.{base}.dev",
-            ]
-            llms = None
-            for domain in domains:
-                llms = await search_llms_txt(domain, query)
-                if llms.get("success") and llms.get("results"):
-                    llms["source"] = "llms.txt"
-                    llms["domain"] = domain
-                    break
-            if llms and llms.get("success") and llms.get("results"):
-                return _res(llms)
-            dd = await devdocs_search(base, query)
-            if dd.get("success") and dd.get("results"):
-                dd["source"] = "devdocs"
-                return _res(dd)
-            return _res({
-                "success": False,
-                "source": "none",
-                "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
-                "hint": "Try github_search or wiki for this library",
-            })
-
-        elif name == "github_search":
-            r = await search_github(
-                q=str(arguments.get("query", "")),
-                search_type=str(arguments.get("search_type", "code")),
-                count=int(arguments.get("count", 10)),
-                owner=str(arguments.get("owner", "")),
-                repo=str(arguments.get("repo", "")),
-                language=str(arguments.get("language", "")),
-                sort=str(arguments.get("sort", "")),
-                order=str(arguments.get("order", "")),
-                filename=str(arguments.get("filename", "")),
-                extension=str(arguments.get("extension", "")),
-                path=str(arguments.get("path", "")),
-                created=str(arguments.get("created", "")),
-                pushed=str(arguments.get("pushed", "")),
-                state=str(arguments.get("state", "")),
-                labels=str(arguments.get("labels", "")),
-                user=str(arguments.get("user", "")),
-                org=str(arguments.get("org", "")),
-                size=str(arguments.get("size", "")),
-                is_=str(arguments.get("is_", "")),
-                stars=str(arguments.get("stars", "")),
-                forks=str(arguments.get("forks", "")),
-                topics=str(arguments.get("topics", "")),
-                page=int(arguments.get("page", 1)),
-                in_qualifier=str(arguments.get("in_qualifier", "")),
-                exclude_qualifier=str(arguments.get("exclude_qualifier", "")),
-                merged=str(arguments.get("merged", "")),
-                head=str(arguments.get("head", "")),
-                base=str(arguments.get("base", "")),
-                review=str(arguments.get("review", "")),
-            )
+        if name == "github":
+            action = str(arguments.get("action", "search"))
+            if action == "search":
+                r = await search_github(
+                    q=str(arguments.get("query", "")),
+                    search_type=str(arguments.get("search_type", "code")),
+                    count=int(arguments.get("count", 10)),
+                    owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    language=str(arguments.get("language", "")),
+                    sort=str(arguments.get("sort", "")),
+                    order=str(arguments.get("order", "")),
+                    filename=str(arguments.get("filename", "")),
+                    extension=str(arguments.get("extension", "")),
+                    path=str(arguments.get("path", "")),
+                    created=str(arguments.get("created", "")),
+                    pushed=str(arguments.get("pushed", "")),
+                    state=str(arguments.get("state", "")),
+                    labels=str(arguments.get("labels", "")),
+                    user=str(arguments.get("user", "")),
+                    org=str(arguments.get("org", "")),
+                    size=str(arguments.get("size", "")),
+                    is_=str(arguments.get("is_", "")),
+                    stars=str(arguments.get("stars", "")),
+                    forks=str(arguments.get("forks", "")),
+                    topics=str(arguments.get("topics", "")),
+                    page=int(arguments.get("page", 1)),
+                    in_qualifier=str(arguments.get("in_qualifier", "")),
+                    exclude_qualifier=str(arguments.get("exclude_qualifier", "")),
+                    merged=str(arguments.get("merged", "")),
+                    head=str(arguments.get("head", "")),
+                    base=str(arguments.get("base", "")),
+                    review=str(arguments.get("review", "")),
+                )
+            elif action == "readme":
+                r = await fetch_readme(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    branch=str(arguments.get("branch", "")))
+            elif action == "contents":
+                r = await gh_get_contents(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    path=str(arguments.get("path", "")),
+                    branch=str(arguments.get("branch", "")))
+            elif action == "languages":
+                r = await gh_get_languages(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")))
+            elif action == "topics":
+                r = await gh_get_topics(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")))
+            elif action == "releases":
+                r = await gh_get_releases(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    count=int(arguments.get("count", 5)))
+            else:
+                return _res({"error": f"unknown github action: {action}"}, False)
             return _res(r, r.get("success", False))
 
         elif name == "wiki":
@@ -594,28 +539,65 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 )
             return _res(r, r.get("success", False))
 
-        elif name == "github":
-            action = str(arguments.get("action", ""))
-            owner = str(arguments.get("owner", ""))
-            repo = str(arguments.get("repo", ""))
-            if action == "readme":
-                r = await fetch_readme(owner=owner, repo=repo, branch=str(arguments.get("branch", "")))
-            elif action == "contents":
-                r = await gh_get_contents(owner=owner, repo=repo, path=str(arguments.get("path", "")),
-                                          branch=str(arguments.get("branch", "")))
-            elif action == "languages":
-                r = await gh_get_languages(owner=owner, repo=repo)
-            elif action == "topics":
-                r = await gh_get_topics(owner=owner, repo=repo)
-            elif action == "releases":
-                r = await gh_get_releases(owner=owner, repo=repo, count=int(arguments.get("count", 5)))
-            else:
-                return _res({"error": f"unknown github action: {action}"}, False)
-            return _res(r, r.get("success", False))
-
         elif name == "docs":
-            action = str(arguments.get("action", ""))
-            if action == "devdocs_list":
+            action = str(arguments.get("action", "search"))
+            if action == "search":
+                query = str(arguments.get("query", ""))
+                library = str(arguments.get("library", "") or query.split()[0])
+                version = str(arguments.get("version", ""))
+                fast = bool(arguments.get("fast", False))
+                library_id = str(arguments.get("library_id", ""))
+                resolved = await context7_resolve(
+                    library if library else query,
+                    version=version, fast=fast, library_id=library_id,
+                )
+                if resolved.get("success"):
+                    result = resolved["docs"]
+                    result["resolved_library_id"] = resolved["library"]["id"]
+                    if version:
+                        result["version_pinned"] = version
+                    result["library"] = resolved["library"]
+                    result["source"] = "context7"
+                    if resolved.get("candidates"):
+                        result["candidates"] = resolved["candidates"]
+                    return _res(result)
+                if resolved.get("candidates"):
+                    return _res({
+                        "success": False,
+                        "source": "context7",
+                        "candidates": resolved["candidates"],
+                        "error": resolved.get("error", "ambiguous library"),
+                        "hint": "Use library_id param to pick the right library",
+                    })
+                rtd = await search_readthedocs(library, query)
+                if rtd.get("success") and rtd.get("results"):
+                    rtd["source"] = "readthedocs"
+                    return _res(rtd)
+                base = library.lower().replace('_', '-').replace(' ', '-')
+                domains = [
+                    f"{base}.dev", f"docs.{base}.io", f"{base}.readthedocs.io",
+                    f"docs.{base}.org", f"{base}.docs.org", f"{base}.docs.dev", f"www.{base}.dev",
+                ]
+                llms = None
+                for domain in domains:
+                    llms = await search_llms_txt(domain, query)
+                    if llms.get("success") and llms.get("results"):
+                        llms["source"] = "llms.txt"
+                        llms["domain"] = domain
+                        break
+                if llms and llms.get("success") and llms.get("results"):
+                    return _res(llms)
+                dd = await devdocs_search(base, query)
+                if dd.get("success") and dd.get("results"):
+                    dd["source"] = "devdocs"
+                    return _res(dd)
+                return _res({
+                    "success": False,
+                    "source": "none",
+                    "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
+                    "hint": "Try the wiki or github tool for this library",
+                })
+            elif action == "devdocs_list":
                 r = await devdocs_list_docs()
             elif action == "devdocs_search":
                 r = await devdocs_search(slug=str(arguments.get("slug", "")),
@@ -705,28 +687,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 tasks.append(search_core_works(query, cnt))
                 task_names.append("core_papers")
 
-            async def _tavily():
-                key = await _next_tv_key()
-                if not key:
-                    return {"success": False, "results": []}
-                try:
-                    c = get_http_client()
-                    r = await c.post(TAVILY_SEARCH,
-                        json={"query": code_q, "search_depth": "basic", "max_results": cnt,
-                              "include_answer": False, "topic": "general"},
-                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-                    if r.status_code != 200:
-                        return {"success": False, "results": []}
-                    data = r.json()
-                    results = []
-                    for item in (data.get("results", []) or []):
-                        results.append({"title": item.get("title","")[:120], "url": item.get("url",""),
-                                        "snippet": (item.get("content","") or "")[:300]})
-                    return {"success": True, "results": results}
-                except Exception:
-                    return {"success": False, "results": []}
-
-            tasks.append(_tavily())
+            tasks.append(tavily_search(code_q, cnt))
             task_names.append("tavily")
 
             deadline = min(int(arguments.get("deadline", 30)), 120)
