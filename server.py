@@ -46,6 +46,8 @@ from core_api import search_core_works, CORE_API_AVAILABLE
 from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info, get_advisory, query_by_hash
 from reranker import rerank as _rerank
 from tavily_search import tavily_search
+from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
+    list_package_files, read_package_file, resolve_package)
 
 server = Server("codesearch")
 
@@ -304,6 +306,26 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        Tool(
+            name="pkg",
+            description="Package intelligence: info (composite metadata), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["info", "changelog", "upgrade_review", "files", "read"], "default": "info"},
+                    "name": {"type": "string"},
+                    "registry": {"type": "string", "default": "auto"},
+                    "version": {"type": "string", "description": "Package version (default: latest)"},
+                    "current_version": {"type": "string", "description": "Current version for upgrade_review"},
+                    "target_version": {"type": "string", "description": "Target version for upgrade_review"},
+                    "from_version": {"type": "string", "description": "Start of version range for changelog (optional)"},
+                    "to_version": {"type": "string", "description": "End of version range for changelog (optional)"},
+                    "path": {"type": "string", "description": "File path filter (files) or exact path (read)"},
+                    "count": {"type": "integer", "default": 10, "description": "Max changelog entries"},
+                },
+                "required": ["name"],
+            },
+        ),
     ]
 
 
@@ -493,6 +515,54 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     registry=str(arguments.get("registry", "auto")),
                     type=action_type,
                 )
+            return _res(r, r.get("success", False))
+
+        elif name == "pkg":
+            action = str(arguments.get("action", "info"))
+            pkg_name = str(arguments.get("name", ""))
+            registry = str(arguments.get("registry", "auto"))
+            if action == "changelog":
+                r = await get_pkg_changelog(
+                    name=pkg_name, registry=registry,
+                    from_version=str(arguments.get("from_version", "")),
+                    to_version=str(arguments.get("to_version", "")),
+                    count=int(arguments.get("count", 10)))
+            elif action == "upgrade_review":
+                r = await get_pkg_upgrade_review(
+                    name=pkg_name, registry=registry,
+                    current_version=str(arguments.get("current_version", "")),
+                    target_version=str(arguments.get("target_version", "")))
+            elif action == "files":
+                r = await list_package_files(
+                    name=pkg_name, registry=registry,
+                    version=str(arguments.get("version", "")),
+                    path_filter=str(arguments.get("path", "")))
+            elif action == "read":
+                r = await read_package_file(
+                    name=pkg_name, registry=registry,
+                    path=str(arguments.get("path", "")),
+                    version=str(arguments.get("version", "")))
+            else:  # info
+                pkg_info = await resolve_package(registry, pkg_name)
+                r = pkg_info
+                if pkg_info.get("success"):
+                    try:
+                        from libraries_io import search_libraries
+                        lib_info = await search_libraries(
+                            name=pkg_name, platform=pkg_info["registry"])
+                        if lib_info.get("success"):
+                            r["libraries_io"] = lib_info
+                    except ImportError:
+                        pass
+                    try:
+                        from oss_index import scan_vulnerabilities
+                        vuln_info = await scan_vulnerabilities(
+                            platform=pkg_info["registry"], name=pkg_name)
+                        if vuln_info.get("success"):
+                            r["vulnerabilities"] = len(
+                                vuln_info.get("reports", [{}])[0].get("vulnerabilities", []))
+                    except ImportError:
+                        pass
             return _res(r, r.get("success", False))
 
         elif name == "so_search":
