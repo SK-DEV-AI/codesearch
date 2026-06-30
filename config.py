@@ -88,6 +88,7 @@ OSS_API = "https://api.guide.sonatype.com/api/v3/component-report"
 
 _tv_rotator = _KeyRotator("TAVILY_KEY", "TAVILY_KEYS")
 _next_tv_key = _tv_rotator.next
+GITHITS_API_TOKEN = os.environ.get("GITHITS_API_TOKEN", "")
 GUIDE_API = "https://api.guide.sonatype.com"
 
 REGISTRIES = {

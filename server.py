@@ -11,7 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, GITHITS_API_TOKEN, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt
@@ -279,6 +279,18 @@ async def handle_list_tools() -> list[Tool]:
                     "offset": {"type": "integer", "default": 0},
                 },
                 "required": ["action"],
+            },
+        ),
+        Tool(
+            name="get_example",
+            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-25s latency. Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural-language description of the code pattern or API usage you need"},
+                    "language": {"type": "string", "description": "Optional programming language; inferred from query if omitted"},
+                },
+                "required": ["query"],
             },
         ),
     ]
@@ -906,6 +918,35 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     open_access=bool(arguments.get("open_access", False)),
                 )
             return _res(r, r.get("success", False))
+
+        elif name == "get_example":
+            if not GITHITS_API_TOKEN:
+                return _res({"error": "GITHITS_API_TOKEN not configured"}, False)
+            query = str(arguments.get("query", ""))
+            if not query:
+                return _res({"error": "query is required"}, False)
+            language = str(arguments.get("language", ""))
+            cmd = ["githits", "example", query, "--json"]
+            if language:
+                cmd.extend(["--lang", language])
+            env = {**__import__("os").environ, "GITHITS_API_TOKEN": GITHITS_API_TOKEN}
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return _res({"error": "get_example timed out after 60s"}, False)
+            if proc.returncode != 0:
+                return _res({"error": f"get_example failed: {stderr.decode().strip()}"}, False)
+            try:
+                data = json.loads(stdout.decode())
+            except json.JSONDecodeError:
+                return _res({"error": f"get_example returned invalid JSON: {stdout.decode()[:500]}"}, False)
+            return _res(data)
 
         else:
             return _res({"error": f"unknown tool: {name}"}, False)
