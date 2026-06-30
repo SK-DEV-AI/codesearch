@@ -31,6 +31,10 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
         return await _crates_keywords()
     if type == "crates_versions":
         return await get_crates_versions(name)
+    if type == "npm_search":
+        return await npm_search(name, count=10)
+    if type == "crates_search":
+        return await crates_search(name, count=10)
     registries_to_try = []
     if registry == "auto":
         registries_to_try = list(REGISTRIES.items())

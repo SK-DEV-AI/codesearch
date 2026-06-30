@@ -246,6 +246,168 @@ async def gh_get_topics(owner: str, repo: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def gh_get_repo(owner: str, repo: str) -> dict:
+    """Get repository metadata (stars, forks, license, description, etc.)."""
+    cache_key = f"gh_repo:{owner}:{repo}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}", headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        d = r.json()
+        result = {"success": True,
+            "name": d.get("name", ""), "full_name": d.get("full_name", ""),
+            "description": d.get("description", ""),
+            "stars": d.get("stargazers_count", 0), "forks": d.get("forks_count", 0),
+            "watchers": d.get("subscribers_count", 0), "open_issues": d.get("open_issues_count", 0),
+            "language": d.get("language") or "", "topics": d.get("topics", []),
+            "license": d.get("license", {}).get("spdx_id", "") if d.get("license") else "",
+            "url": d.get("html_url", ""), "homepage": d.get("homepage", "") or "",
+            "created_at": d.get("created_at", ""), "updated_at": d.get("updated_at", ""),
+            "archived": d.get("archived", False), "fork": d.get("fork", False),
+            "default_branch": d.get("default_branch", ""),
+        }
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def search_commits(query: str, count: int = 10, sort: str = "", order: str = "",
+                          owner: str = "", repo: str = "", author: str = "",
+                          committer: str = "", author_date: str = "", committer_date: str = "",
+                          merge: str = "", hash_: str = "", page: int = 1) -> dict:
+    """Search commits with qualifiers."""
+    cache_key = f"gh_commits:{query}:{owner}:{repo}:{count}:{sort}:{order}:{author}:{committer}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return {"success": True, "results": cached, "cached": True}
+    try:
+        query_parts = [query]
+        if owner and repo:
+            query_parts.append(f"repo:{owner}/{repo}")
+        if author:
+            query_parts.append(f"author:{author}")
+        if committer:
+            query_parts.append(f"committer:{committer}")
+        if author_date:
+            query_parts.append(f"author-date:{author_date}")
+        if committer_date:
+            query_parts.append(f"committer-date:{committer_date}")
+        if merge:
+            query_parts.append(f"merge:{merge}")
+        if hash_:
+            query_parts.append(f"hash:{hash_}")
+        full_query = " ".join(query_parts)
+        url = "https://api.github.com/search/commits"
+        params: dict[str, Any] = {"q": full_query, "per_page": min(count, 100)}
+        if sort:
+            params["sort"] = sort
+        if order:
+            params["order"] = order
+        if page > 1:
+            params["page"] = page
+        r = await _http_request("GET", url, params=params, headers=await _gh_headers("github.v3.text-match+json"))
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub commits: {r.status_code} {r.text[:200]}"}
+        data = r.json()
+        results = []
+        for item in (data.get("items", []) or [])[:count]:
+            commit = item.get("commit", {})
+            author_info = commit.get("author", {}) or {}
+            results.append({
+                "sha": item.get("sha", ""),
+                "message": (commit.get("message", "") or "")[:500],
+                "author": author_info.get("name", ""),
+                "author_email": author_info.get("email", ""),
+                "author_date": author_info.get("date", ""),
+                "committer": (commit.get("committer", {}) or {}).get("name", ""),
+                "url": item.get("html_url", ""),
+                "repo": item.get("repository", {}).get("full_name", ""),
+            })
+        await _set_cache(cache_key, results)
+        return {"success": True, "results": results, "total": data.get("total_count", 0)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_branches(owner: str, repo: str) -> dict:
+    """List branches for a repository."""
+    cache_key = f"gh_branches:{owner}:{repo}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/branches", headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        branches = [{"name": b.get("name", ""), "sha": b.get("commit", {}).get("sha", ""),
+                      "protected": b.get("protected", False)}
+                     for b in (r.json() or [])]
+        result = {"success": True, "branches": branches, "default_branch": "main"}
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_tags(owner: str, repo: str) -> dict:
+    """List tags for a repository."""
+    cache_key = f"gh_tags:{owner}:{repo}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/tags", headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub {r.status_code}"}
+        tags = [{"name": t.get("name", ""), "sha": t.get("commit", {}).get("sha", "")}
+                 for t in (r.json() or [])]
+        result = {"success": True, "tags": tags}
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_tree(owner: str, repo: str, tree_sha: str = "HEAD", recursive: bool = True) -> dict:
+    """Get a git tree recursively for a repository."""
+    cache_key = f"gh_tree:{owner}:{repo}:{tree_sha}:{recursive}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        if tree_sha == "HEAD":
+            ref_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/refs/heads/main",
+                headers=await _gh_headers())
+            if ref_r.status_code != 200:
+                ref_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/refs/heads/master",
+                    headers=await _gh_headers())
+            if ref_r.status_code == 200:
+                tree_sha = ref_r.json().get("object", {}).get("sha", "HEAD")
+        params = {"recursive": "1"} if recursive else {}
+        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/trees/{tree_sha}",
+            params=params, headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub tree {r.status_code}"}
+        data = r.json()
+        entries = []
+        for t in (data.get("tree", []) or []):
+            entries.append({
+                "path": t.get("path", ""),
+                "type": t.get("type", ""),
+                "size": t.get("size", 0),
+            })
+        result = {"success": True, "tree_sha": data.get("sha", ""), "entries": entries,
+                   "truncated": data.get("truncated", False)}
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
     cache_key = f"gh_rel:{owner}:{repo}:{count}"
     cached = await _cached(cache_key)

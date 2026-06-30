@@ -15,7 +15,7 @@ from config import GH_TOKEN, SOFA_KEY, LI_KEY, GITHITS_API_TOKEN, close_http_cli
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt
-from github_api import search_github, fetch_readme, gh_get_contents, gh_get_languages, gh_get_topics, gh_get_releases
+from github_api import search_github, fetch_readme, gh_get_contents, gh_get_languages, gh_get_topics, gh_get_releases, gh_get_repo, search_commits, gh_get_branches, gh_get_tags, gh_get_tree
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
 from stack_exchange import (search_so, so_similar, so_tags_info, so_tags_wikis,
@@ -64,11 +64,11 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="github",
-            description="GitHub operations: search code/repos/issues/users, repo readme/contents/languages/topics/releases. Use start_line/end_line with contents action for targeted source reads.",
+            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree. Use start_line/end_line with contents action for targeted source reads.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree"], "default": "search"},
                     "query": {"type": "string"},
                     "search_type": {"type": "string", "enum": ["code","repos","issues","users"], "default": "code"},
                     "owner": {"type": "string"},
@@ -100,6 +100,10 @@ async def handle_list_tools() -> list[Tool]:
                     "page": {"type": "integer", "description": "Page number for pagination"},
                     "start_line": {"type": "integer", "description": "1-based start line for contents action (slices file content by newline)"},
                     "end_line": {"type": "integer", "description": "1-based end line (inclusive) for contents action"},
+                    "author": {"type": "string", "description": "Author to filter by (commits action)"},
+                    "tree_sha": {"type": "string", "default": "HEAD", "description": "Tree SHA or HEAD for tree action"},
+                    "recursive": {"type": "boolean", "default": True, "description": "Recursive tree for tree action"},
+                    "branch": {"type": "string", "description": "Branch name (readme/contents actions)"},
                 },
                 "required": ["action"],
             },
@@ -217,7 +221,7 @@ async def handle_list_tools() -> list[Tool]:
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
-                    "action": {"type": "string", "description": "versions|dependencies|dependents|github_repo|github_dependencies"},
+                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_search|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_search|depsdev_dependencies|depsdev_info"},
                     "version": {"type": "string"},
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
@@ -376,6 +380,29 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await gh_get_releases(owner=str(arguments.get("owner", "")),
                     repo=str(arguments.get("repo", "")),
                     count=int(arguments.get("count", 5)))
+            elif action == "repo":
+                r = await gh_get_repo(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")))
+            elif action == "commits":
+                r = await search_commits(query=str(arguments.get("query", "")),
+                    count=int(arguments.get("count", 10)),
+                    owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    author=str(arguments.get("author", "")),
+                    sort=str(arguments.get("sort", "")),
+                    order=str(arguments.get("order", "")),
+                    page=int(arguments.get("page", 1)))
+            elif action == "branches":
+                r = await gh_get_branches(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")))
+            elif action == "tags":
+                r = await gh_get_tags(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")))
+            elif action == "tree":
+                r = await gh_get_tree(owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    tree_sha=str(arguments.get("tree_sha", "HEAD")),
+                    recursive=bool(arguments.get("recursive", True)))
             else:
                 return _res({"error": f"unknown github action: {action}"}, False)
             return _res(r, r.get("success", False))
@@ -419,14 +446,14 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 return _res({"error": f"unknown wiki action: {action}"}, False)
 
         elif name == "search_package":
-            pkg_type = str(arguments.get("type", ""))
+            action_type = str(arguments.get("action", ""))
             pkg_name = str(arguments.get("name", ""))
-            if pkg_type == "depsdev_dependencies":
+            if action_type == "depsdev_dependencies":
                 parts = pkg_name.split("/", 1)
                 system = parts[0] if len(parts) > 1 else "npm"
                 pkg = parts[1] if len(parts) > 1 else pkg_name
                 r = await get_resolved_dependencies(system, pkg, str(arguments.get("version", "")))
-            elif pkg_type == "depsdev_info":
+            elif action_type == "depsdev_info":
                 parts = pkg_name.split("/", 1)
                 system = parts[0] if len(parts) > 1 else "npm"
                 pkg = parts[1] if len(parts) > 1 else pkg_name
@@ -435,7 +462,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await search_package(
                     name=pkg_name,
                     registry=str(arguments.get("registry", "auto")),
-                    type=pkg_type,
+                    type=action_type,
                 )
             return _res(r, r.get("success", False))
 
