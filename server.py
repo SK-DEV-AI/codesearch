@@ -14,29 +14,38 @@ from mcp.types import CallToolResult, TextContent, Tool
 from config import GH_TOKEN, SOFA_KEY, LI_KEY, GITHITS_API_TOKEN, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
-from context7 import context7_resolve, search_llms_txt
-from github_api import search_github, fetch_readme, gh_get_contents, gh_get_languages, gh_get_topics, gh_get_releases, gh_get_repo, search_commits, gh_get_branches, gh_get_tags, gh_get_tree
+from context7 import context7_resolve, search_llms_txt, context7_add_repo
+from github_api import (search_github, fetch_readme, gh_get_contents, gh_get_languages,
+    gh_get_topics, gh_get_releases, gh_get_repo, search_commits, gh_get_branches,
+    gh_get_tags, gh_get_tree, search_labels, search_topics)
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
 from stack_exchange import (search_so, so_similar, so_tags_info, so_tags_wikis,
-                            get_questions_by_ids, search_users, search_tags, get_question_comments)
+    get_questions_by_ids, search_users, search_tags, get_question_comments,
+    get_answers_by_ids, get_questions_by_sort, get_users_by_ids)
 from sofa import search_sofa
 from hackernews import search_hn, hn_get_item, hn_firebase_stories, hn_get_user
 from libraries_io import (search_libraries_io, libraries_io_search, get_versions,
-                          get_dependencies, get_dependents, get_github_repo, get_github_dependencies)
+    get_dependencies, get_dependents, get_github_repo, get_github_dependencies,
+    li_list_platforms, li_list_licenses, li_keyword_projects)
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        search_vulnerabilities, analyze_license, quick_component_report)
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
-                         readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
+    readthedocs_translations, readthedocs_subprojects, readthedocs_builds,
+    readthedocs_redirects, readthedocs_notifications, readthedocs_remote_repos,
+    readthedocs_remote_orgs)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
-                        get_npm_time, get_npm_version, get_crates_versions, get_pypi_version)
-from devdocs import devdocs_list_docs, devdocs_fetch, devdocs_fetch_content, devdocs_search, devdocs_meta
+    get_npm_time, get_npm_version, get_crates_versions, get_pypi_version,
+    npm_get_version, crates_get_version, crates_get_readme, crates_get_summary)
+from devdocs import (devdocs_list_docs, devdocs_fetch, devdocs_fetch_content,
+    devdocs_search, devdocs_meta, devdocs_toc)
 from semantic_scholar import (search_papers, get_paper_details,
-                               get_papers_batch, get_paper_citations,
-                               get_paper_references, get_paper_recommendations,
-                               search_authors, get_author_papers, autocomplete_papers)
+    get_papers_batch, get_paper_citations, get_paper_references,
+    get_paper_recommendations, search_authors, get_author_papers,
+    autocomplete_papers, s2_author_by_id, s2_bulk_search,
+    s2_recommendations_with_negatives)
 from core_api import search_core_works, CORE_API_AVAILABLE
-from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info
+from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info, get_advisory, query_by_hash
 from reranker import rerank as _rerank
 from tavily_search import tavily_search
 
@@ -68,7 +77,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree", "search_labels", "search_topics"], "default": "search"},
                     "query": {"type": "string"},
                     "search_type": {"type": "string", "enum": ["code","repos","issues","users"], "default": "code"},
                     "owner": {"type": "string"},
@@ -104,6 +113,7 @@ async def handle_list_tools() -> list[Tool]:
                     "tree_sha": {"type": "string", "default": "HEAD", "description": "Tree SHA or HEAD for tree action"},
                     "recursive": {"type": "boolean", "default": True, "description": "Recursive tree for tree action"},
                     "branch": {"type": "string", "description": "Branch name (readme/contents actions)"},
+                    "repository_id": {"type": "integer", "description": "Repository ID for search_labels action (GitHub numeric repo ID)"},
                 },
                 "required": ["action"],
             },
@@ -151,8 +161,11 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|depsdev_dependencies|depsdev_info"},
-                    "version": {"type": "string", "description": "Package version (required for depsdev_dependencies)"},
+                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
+                    "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
+                    "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
+                    "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
+                    "hash_value": {"type": "string", "description": "Base64-encoded hash value for depsdev_query"},
                 },
                 "required": ["name"],
             },
@@ -170,10 +183,10 @@ async def handle_list_tools() -> list[Tool]:
                     "accepted": {"type": "boolean"},
                     "closed": {"type": "boolean"},
                     "sort": {"type": "string", "default": "relevance"},
-                    "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis", "questions_by_ids", "search_users", "search_tags", "question_comments"]},
+                    "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers_by_ids", "users_by_ids"]},
                     "site": {"type": "string", "default": "stackoverflow"},
                     "question_id": {"type": "integer"},
-                    "ids": {"type": "string", "description": "Comma-separated question IDs for questions_by_ids"},
+                    "ids": {"type": "string", "description": "Comma-separated IDs for questions_by_ids / answers_by_ids / users_by_ids"},
                     "content_type": {"type": "string", "enum": ["question", "til", "blueprint"]},
                     "post_id": {"type": "string"},
                     "steering": {"type": "string"},
@@ -221,10 +234,11 @@ async def handle_list_tools() -> list[Tool]:
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
-                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_search|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_search|depsdev_dependencies|depsdev_info"},
+                    "action": {"type": "string", "description": "versions|dependencies|dependents|github_repo|github_dependencies|platforms|licenses|keywords"},
                     "version": {"type": "string"},
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
+                    "keyword": {"type": "string", "description": "Keyword for keywords action"},
                 },
             },
         ),
@@ -253,7 +267,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "devdocs_toc", "context7_add_repo", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds", "rtd_redirects", "rtd_notifications", "rtd_remote_repos", "rtd_remote_orgs"], "default": "search"},
                     "query": {"type": "string"},
                     "library": {"type": "string"},
                     "library_id": {"type": "string", "description": "Context7 library ID (skip search)"},
@@ -262,6 +276,8 @@ async def handle_list_tools() -> list[Tool]:
                     "slug": {"type": "string"},
                     "path": {"type": "string"},
                     "project": {"type": "string"},
+                    "provider": {"type": "string", "description": "Git provider for context7_add_repo (github, gitlab)"},
+                    "repo_url": {"type": "string", "description": "Repository URL for context7_add_repo"},
                 },
             },
         ),
@@ -271,7 +287,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "arxiv_search"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "arxiv_search", "author_by_id", "bulk_search", "recommendations_negatives"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
@@ -281,6 +297,9 @@ async def handle_list_tools() -> list[Tool]:
                     "fields_of_study": {"type": "string"},
                     "open_access": {"type": "boolean"},
                     "offset": {"type": "integer", "default": 0},
+                    "fields": {"type": "string", "description": "Comma-separated S2 fields (paperId,title,abstract,citationCount,authors,etc)"},
+                    "positive_ids": {"type": "string", "description": "Comma-separated positive paper IDs for recommendations_negatives"},
+                    "negative_ids": {"type": "string", "description": "Comma-separated negative paper IDs for recommendations_negatives"},
                 },
                 "required": ["action"],
             },
@@ -403,6 +422,14 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     repo=str(arguments.get("repo", "")),
                     tree_sha=str(arguments.get("tree_sha", "HEAD")),
                     recursive=bool(arguments.get("recursive", True)))
+            elif action == "search_labels":
+                r = await search_labels(query=str(arguments.get("query","")),
+                    repository_id=int(arguments.get("repository_id",0)),
+                    sort=str(arguments.get("sort","")), order=str(arguments.get("order","")),
+                    count=int(arguments.get("count",10)))
+            elif action == "search_topics":
+                r = await search_topics(query=str(arguments.get("query","")),
+                    count=int(arguments.get("count",10)))
             else:
                 return _res({"error": f"unknown github action: {action}"}, False)
             return _res(r, r.get("success", False))
@@ -448,7 +475,15 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         elif name == "search_package":
             action_type = str(arguments.get("action", ""))
             pkg_name = str(arguments.get("name", ""))
-            if action_type == "depsdev_dependencies":
+            if action_type == "npm_get_version":
+                r = await npm_get_version(name=pkg_name, version=str(arguments.get("version","")))
+            elif action_type == "crates_get_version":
+                r = await crates_get_version(name=pkg_name, version=str(arguments.get("version","")))
+            elif action_type == "crates_get_readme":
+                r = await crates_get_readme(name=pkg_name, version=str(arguments.get("version","")))
+            elif action_type == "crates_summary":
+                r = await crates_get_summary()
+            elif action_type == "depsdev_dependencies":
                 parts = pkg_name.split("/", 1)
                 system = parts[0] if len(parts) > 1 else "npm"
                 pkg = parts[1] if len(parts) > 1 else pkg_name
@@ -458,6 +493,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 system = parts[0] if len(parts) > 1 else "npm"
                 pkg = parts[1] if len(parts) > 1 else pkg_name
                 r = await get_depsdev_package_info(system, pkg)
+            elif action_type == "depsdev_advisory":
+                r = await get_advisory(advisory_id=str(arguments.get("advisory_id","")))
+            elif action_type == "depsdev_query":
+                r = await query_by_hash(
+                    hash_type=str(arguments.get("hash_type","SHA256")),
+                    hash_value=str(arguments.get("hash_value","")))
             else:
                 r = await search_package(
                     name=pkg_name,
@@ -499,6 +540,19 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     site=str(arguments.get("site", "stackoverflow")),
                     count=int(arguments.get("count", 20)),
                 )
+            elif action == "questions":
+                r = await get_questions_by_sort(sort=str(arguments.get("sort","hot")),
+                    tagged=str(arguments.get("tags","")),
+                    site=str(arguments.get("site","stackoverflow")),
+                    count=int(arguments.get("count",10)))
+            elif action == "answers":
+                ids_raw = str(arguments.get("ids",""))
+                ids_list = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+                r = await get_answers_by_ids(ids_list, site=str(arguments.get("site","stackoverflow")))
+            elif action == "users":
+                ids_raw = str(arguments.get("ids",""))
+                ids_list = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+                r = await get_users_by_ids(ids_list, site=str(arguments.get("site","stackoverflow")))
             else:
                 r = await search_so(
                     query=str(arguments.get("query", "")),
@@ -548,7 +602,14 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             q = str(arguments.get("query", ""))
             n = str(arguments.get("name", ""))
             platform = str(arguments.get("platform", ""))
-            if action == "versions":
+            if action == "platforms":
+                r = await li_list_platforms(count=int(arguments.get("count",50)))
+            elif action == "licenses":
+                r = await li_list_licenses(count=int(arguments.get("count",50)))
+            elif action == "keywords":
+                r = await li_keyword_projects(keyword=str(arguments.get("keyword","")),
+                    count=int(arguments.get("count",10)))
+            elif action == "versions":
                 r = await get_versions(platform, n)
             elif action == "dependencies":
                 r = await get_dependencies(platform, n, version=str(arguments.get("version", "")))
@@ -663,6 +724,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                                                 path=str(arguments.get("path", "")))
             elif action == "devdocs_meta":
                 r = await devdocs_meta(slug=str(arguments.get("slug", "")))
+            elif action == "devdocs_toc":
+                r = await devdocs_toc(doc=str(arguments.get("slug","")),
+                    version=str(arguments.get("version","")))
+            elif action == "context7_add_repo":
+                r = await context7_add_repo(provider=str(arguments.get("provider","github")),
+                    repo_url=str(arguments.get("repo_url","")))
             elif action == "rtd_info":
                 r = await readthedocs_project_info(str(arguments.get("project", "")))
             elif action == "rtd_versions":
@@ -677,6 +744,14 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await readthedocs_subprojects(str(arguments.get("project", "")))
             elif action == "rtd_builds":
                 r = await readthedocs_builds(str(arguments.get("project", "")))
+            elif action == "rtd_redirects":
+                r = await readthedocs_redirects(str(arguments.get("project", "")))
+            elif action == "rtd_notifications":
+                r = await readthedocs_notifications()
+            elif action == "rtd_remote_repos":
+                r = await readthedocs_remote_repos()
+            elif action == "rtd_remote_orgs":
+                r = await readthedocs_remote_orgs()
             else:
                 return _res({"error": f"unknown docs action: {action}"}, False)
             return _res(r, r.get("success", False))
@@ -893,6 +968,20 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action == "autocomplete":
                 r = await autocomplete_papers(
                     query=str(arguments.get("query", "")))
+            elif action == "author_by_id":
+                r = await s2_author_by_id(author_id=str(arguments.get("author_id","")),
+                    fields=str(arguments.get("fields","")))
+            elif action == "bulk_search":
+                raw = str(arguments.get("paper_ids",""))
+                ids = [x.strip() for x in raw.split(",") if x.strip()]
+                r = await s2_bulk_search(ids, fields=str(arguments.get("fields","")))
+            elif action == "recommendations_negatives":
+                pos_raw = str(arguments.get("positive_ids",""))
+                pos_ids = [x.strip() for x in pos_raw.split(",") if x.strip()]
+                neg_raw = str(arguments.get("negative_ids",""))
+                neg_ids = [x.strip() for x in neg_raw.split(",") if x.strip()]
+                r = await s2_recommendations_with_negatives(pos_ids, neg_ids or None,
+                    limit=int(arguments.get("count",10)), fields=str(arguments.get("fields","")))
             elif action == "arxiv_search":
                 c = get_http_client()
                 from urllib.parse import urlencode

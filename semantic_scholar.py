@@ -246,3 +246,55 @@ async def autocomplete_papers(query: str) -> dict:
         return {"success": True, "results": results}
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def s2_author_by_id(author_id: str, fields: str = "") -> dict:
+    try:
+        f = fields or _AUTHOR_FIELDS
+        r = await _s2_get(f"{S2_AUTHOR}/{author_id}", {"fields": f})
+        if r.status_code != 200: return {"success": False, "error": f"S2 author {author_id}: {r.status_code}"}
+        d = r.json()
+        return {"success": True, "authorId": d.get("authorId",""), "name": d.get("name",""),
+            "affiliations": d.get("affiliations",[]), "citationCount": d.get("citationCount",0),
+            "hIndex": d.get("hIndex",0), "paperCount": d.get("paperCount",0)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
+    if not ids: return {"success": False, "error": "no paper IDs"}
+    try:
+        f = fields or FIELDS
+        headers = _s2_headers(); headers["Content-Type"] = "application/json"
+        c = get_http_client()
+        r = await c.post(f"{S2_PAPER}/batch", json={"ids": ids[:500]}, params={"fields": f}, headers=headers)
+        if r.status_code != 200: return {"success": False, "error": f"S2 batch: {r.status_code}"}
+        data: list = r.json()
+        results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
+            "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
+            "citationCount": i.get("citationCount",0),
+            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or [])]
+        return {"success": True, "results": results, "queried": len(ids), "returned": len(results)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def s2_recommendations_with_negatives(positive_ids: list[str], negative_ids: list[str] | None = None,
+                                            limit: int = 10, fields: str = "") -> dict:
+    if not positive_ids: return {"success": False, "error": "no positive paper IDs"}
+    try:
+        f = fields or FIELDS
+        headers = _s2_headers(); headers["Content-Type"] = "application/json"
+        body: dict[str, Any] = {"positivePaperIds": positive_ids[:100], "limit": min(limit, 100)}
+        if negative_ids: body["negativePaperIds"] = negative_ids[:20]
+        c = get_http_client()
+        r = await c.post(S2_RECOMMENDATIONS.replace("/forpaper",""), json=body, params={"fields": f}, headers=headers)
+        if r.status_code != 200: return {"success": False, "error": f"S2 recs: {r.status_code}"}
+        data: list = r.json()
+        results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
+            "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
+            "citationCount": i.get("citationCount",0),
+            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or [])]
+        return {"success": True, "results": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}

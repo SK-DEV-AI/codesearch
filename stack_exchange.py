@@ -218,6 +218,78 @@ async def _so_search_excerpts(query: str, count: int = 5, tags: str = "",
         return {"success": False, "error": str(e)}
 
 
+async def get_answers_by_ids(ids: list[int], site: str = "stackoverflow") -> dict:
+    """Get answers by their IDs."""
+    if not ids: return {"success": False, "error": "no answer IDs"}
+    try:
+        ids_str = ";".join(str(i) for i in ids[:100])
+        c = get_http_client()
+        r = await c.get(f"{SO_API}/answers/{ids_str}", params={
+            "order": "desc", "sort": "votes", "site": site, "pagesize": min(len(ids), 100),
+            "filter": "withbody"}, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200: return {"success": False, "error": f"SE answers: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in (data.get("items", []) or []):
+            results.append({"answer_id": item.get("answer_id", 0), "question_id": item.get("question_id", 0),
+                "score": item.get("score", 0), "is_accepted": item.get("is_accepted", False),
+                "body": (item.get("body", "") or "")[:2000],
+                "creation_date": item.get("creation_date", 0),
+                "user_name": item.get("owner", {}).get("display_name", "") if item.get("owner") else ""})
+        return {"success": True, "results": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_questions_by_sort(sort: str = "hot", tagged: str = "", site: str = "stackoverflow",
+                                 count: int = 10) -> dict:
+    """Get questions sorted by hot/week/month/activity/votes."""
+    valid_sorts = ["activity", "creation", "votes", "hot", "week", "month"]
+    if sort not in valid_sorts: sort = "hot"
+    try:
+        params: dict[str, Any] = {"order": "desc", "sort": sort, "site": site,
+            "pagesize": min(count, 100), "filter": "withbody"}
+        if tagged: params["tagged"] = tagged
+        c = get_http_client()
+        r = await c.get(f"{SO_API}/questions", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200: return {"success": False, "error": f"SE questions: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in (data.get("items", []) or [])[:count]:
+            results.append({"question_id": item.get("question_id", 0),
+                "title": item.get("title", ""), "score": item.get("score", 0),
+                "answer_count": item.get("answer_count", 0),
+                "view_count": item.get("view_count", 0),
+                "tags": item.get("tags", []),
+                "url": item.get("link", ""),
+                "creation_date": item.get("creation_date", 0)})
+        return {"success": True, "results": results, "sort": sort}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def get_users_by_ids(ids: list[int], site: str = "stackoverflow") -> dict:
+    """Get users by their IDs."""
+    if not ids: return {"success": False, "error": "no user IDs"}
+    try:
+        ids_str = ";".join(str(i) for i in ids[:100])
+        c = get_http_client()
+        r = await c.get(f"{SO_API}/users/{ids_str}", params={
+            "order": "desc", "sort": "reputation", "site": site, "pagesize": min(len(ids), 100)},
+            headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200: return {"success": False, "error": f"SE users: {r.status_code}"}
+        data = r.json()
+        results = []
+        for item in (data.get("items", []) or []):
+            results.append({"user_id": item.get("user_id", 0), "display_name": item.get("display_name", ""),
+                "reputation": item.get("reputation", 0),
+                "accept_rate": item.get("accept_rate", 0),
+                "badge_counts": item.get("badge_counts", {})})
+        return {"success": True, "results": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def _so_tags_faq(tags: str, count: int = 5, site: str = "stackoverflow") -> dict:
     try:
         params: dict[str, Any] = {

@@ -138,6 +138,66 @@ async def readthedocs_subprojects(project: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def readthedocs_redirects(slug: str) -> dict:
+    """List redirects for a ReadTheDocs project."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/projects/{slug}/redirects/", headers=await _rtd_headers())
+        if r.status_code != 200: return {"success": False, "error": f"RTD redirects: {r.status_code}"}
+        data = r.json()
+        results = [{"pk": d.get("pk", 0), "from_url": d.get("from_url", ""), "to_url": d.get("to_url", ""),
+                     "redirect_type": d.get("redirect_type", ""), "status": d.get("http_status", 302)}
+                    for d in (data.get("results", []) or [])]
+        return {"success": True, "redirects": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def readthedocs_notifications() -> dict:
+    """List notifications for the authenticated user."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/notifications/", headers=await _rtd_headers())
+        if r.status_code != 200: return {"success": False, "error": f"RTD notifications: {r.status_code}"}
+        data = r.json()
+        results = [{"id": d.get("id", 0), "message": d.get("message", ""),
+                     "resource_uri": d.get("resource_uri", "")}
+                    for d in (data.get("results", []) or [])]
+        return {"success": True, "notifications": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def readthedocs_remote_repos() -> dict:
+    """List remote repositories connected to ReadTheDocs."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/remote/repositories/", headers=await _rtd_headers())
+        if r.status_code != 200: return {"success": False, "error": f"RTD remote repos: {r.status_code}"}
+        data = r.json()
+        results = [{"id": d.get("id", 0), "name": d.get("name", ""),
+                     "vcs_provider": d.get("vcs_provider", ""), "url": d.get("clone_url", ""),
+                     "is_locked": d.get("is_locked", False)}
+                    for d in (data.get("results", []) or [])]
+        return {"success": True, "remotes": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def readthedocs_remote_orgs() -> dict:
+    """List remote organizations connected to ReadTheDocs."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"{RTD_API}/remote/organizations/", headers=await _rtd_headers())
+        if r.status_code != 200: return {"success": False, "error": f"RTD remote orgs: {r.status_code}"}
+        data = r.json()
+        results = [{"id": d.get("id", 0), "name": d.get("name", ""), "slug": d.get("slug", "")}
+                    for d in (data.get("results", []) or [])]
+        return {"success": True, "organizations": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def readthedocs_builds(project: str, limit: int = 10) -> dict:
     try:
         c = get_http_client()

@@ -428,3 +428,53 @@ async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
         return result
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def search_labels(query: str, repository_id: int = 0, sort: str = "",
+                        order: str = "", count: int = 10) -> dict:
+    """Search labels within a repository by repository_id."""
+    cache_key = f"gh_lbl:{query}:{repository_id}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        params: dict[str, Any] = {"q": query, "per_page": min(count, 100)}
+        if sort: params["sort"] = sort
+        if order: params["order"] = order
+        if repository_id: params["repository_id"] = repository_id
+        r = await _http_request("GET", "https://api.github.com/search/labels",
+                                params=params, headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub labels: {r.status_code}"}
+        items = (r.json().get("items", []) or [])[:count]
+        results = [{"name": lb.get("name", ""), "description": lb.get("description", ""),
+                     "color": lb.get("color", ""), "default": lb.get("default", False)}
+                    for lb in items]
+        await _set_cache(cache_key, results)
+        return {"success": True, "results": results, "total": r.json().get("total_count", 0)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def search_topics(query: str, count: int = 10) -> dict:
+    """Search topics by query."""
+    cache_key = f"gh_tpc:{query}:{count}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET", "https://api.github.com/search/topics",
+            params={"q": query, "per_page": min(count, 100)},
+            headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub topics: {r.status_code}"}
+        items = (r.json().get("items", []) or [])[:count]
+        results = [{"name": t.get("name", ""), "description": t.get("description", ""),
+                     "short_description": t.get("short_description", ""),
+                     "aliases": t.get("aliases", []),
+                     "created": t.get("created_at", ""), "updated": t.get("updated_at", "")}
+                    for t in items]
+        await _set_cache(cache_key, results)
+        return {"success": True, "results": results, "total": r.json().get("total_count", 0)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}

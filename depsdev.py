@@ -76,3 +76,30 @@ async def get_package_info(system: str, package: str) -> dict:
         }
     except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError) as e:
         return {"success": False, "error": f"deps.dev: {e}"}
+
+
+async def get_advisory(advisory_id: str) -> dict:
+    try:
+        c = get_http_client()
+        r = await c.get(f"{DEPSDEV_API.replace('/v3','/v3alpha')}/advisories/{advisory_id}", timeout=10)
+        if r.status_code != 200: return {"success": False, "error": f"advisory: {r.status_code}"}
+        d = r.json()
+        return {"success": True, "id": d.get("id",""), "summary": d.get("summary",""),
+            "aliases": d.get("aliases",[]), "severity": d.get("severity",""),
+            "affected": d.get("affected",[]), "references": d.get("references",[])}
+    except (httpx.HTTPError, ValueError, json.JSONDecodeError) as e:
+        return {"success": False, "error": f"advisory: {e}"}
+
+
+async def query_by_hash(hash_type: str, hash_value: str) -> dict:
+    try:
+        c = get_http_client()
+        r = await c.get(f"{DEPSDEV_API.replace('/v3','/v3alpha')}/query",
+            params={"hash.type": hash_type, "hash.value": hash_value}, timeout=10)
+        if r.status_code != 200: return {"success": False, "error": f"query: {r.status_code}"}
+        d = r.json()
+        versions = [{"packageKey": v.get("packageKey",{}), "version": v.get("version","")}
+                     for v in (d.get("versions",[]) or [])]
+        return {"success": True, "versions": versions}
+    except (httpx.HTTPError, ValueError, json.JSONDecodeError) as e:
+        return {"success": False, "error": f"query: {e}"}

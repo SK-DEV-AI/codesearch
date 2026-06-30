@@ -150,6 +150,49 @@ async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def li_list_platforms(count: int = 50) -> dict:
+    """List all supported platforms."""
+    try:
+        c = get_http_client()
+        r = await c.get(LI_API + "/platforms", headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
+        if r.status_code != 200: return {"success": False, "error": f"Libraries.io platforms: {r.status_code}"}
+        platforms = [p.get("name", p) if isinstance(p, dict) else p for p in (r.json() or [])[:count]]
+        return {"success": True, "platforms": platforms}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def li_list_licenses(count: int = 50) -> dict:
+    """List all known licenses."""
+    try:
+        c = get_http_client()
+        r = await c.get(LI_API + "/licenses", headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
+        if r.status_code != 200: return {"success": False, "error": f"Libraries.io licenses: {r.status_code}"}
+        data = r.json() or []
+        results = [{"name": l.get("name", l) if isinstance(l, dict) else l} for l in data[:count]]
+        return {"success": True, "licenses": results}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def li_keyword_projects(keyword: str, count: int = 10) -> dict:
+    """Get projects with a specific keyword."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"{LI_API}/keywords/{keyword}", params={"per_page": min(count, 100)},
+                        headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
+        if r.status_code != 200: return {"success": False, "error": f"Libraries.io keyword: {r.status_code}"}
+        data = r.json() or []
+        results = [{"name": d.get("name", ""), "platform": d.get("platform", ""),
+                     "description": d.get("description", ""),
+                     "language": d.get("language", ""),
+                     "stars": d.get("stars", 0), "latest_stable_release": d.get("latest_stable_release", "")}
+                    for d in data[:count]]
+        return {"success": True, "results": results, "keyword": keyword}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def get_dependents(platform: str, name: str) -> dict:
     if not LI_KEY:
         return {"success": False, "error": "LI_KEY not configured"}

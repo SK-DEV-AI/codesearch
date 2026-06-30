@@ -81,6 +81,19 @@ async def devdocs_search(slug: str, query: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def devdocs_toc(doc: str, version: str = "") -> dict:
+    """Get table of contents for a DevDocs docset."""
+    try:
+        c = get_http_client()
+        url = f"{DEVDOCS_API}/{doc}/{version}.json" if version else f"{DEVDOCS_API}/{doc}.json"
+        r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"DevDocs TOC: HTTP {r.status_code}"}
+        return {"success": True, "doc": doc, "version": version, "toc": r.json()}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def devdocs_meta(slug: str) -> dict:
     try:
         c = get_http_client()

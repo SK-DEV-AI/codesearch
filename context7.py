@@ -201,3 +201,17 @@ async def search_llms_txt(domain: str, query: str) -> dict:
                 })
         return {"success": True, "results": results}
     return {"success": True, "results": [], "note": "no matching links found in llms.txt"}
+
+
+async def context7_add_repo(provider: str, repo_url: str) -> dict:
+    """Submit a repository for Context7 indexing."""
+    try:
+        c = get_http_client()
+        r = await c.post(f"https://context7.com/api/v2/add/repo/{provider}",
+            json={"repo_url": repo_url}, headers=await _context7_headers(), timeout=30)
+        if r.status_code != 200:
+            return {"success": False, "error": f"Context7 add_repo: {r.status_code}"}
+        d = r.json()
+        return {"success": True, "message": d.get("message", "repo submitted"), "id": d.get("id", "")}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
