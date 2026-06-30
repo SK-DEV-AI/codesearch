@@ -18,6 +18,14 @@ from github_api import (search_github, fetch_readme, gh_get_contents, gh_get_lan
     gh_get_tags, gh_get_tree, search_labels, search_topics)
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
+from githits import (
+    get_example as githits_get_example,
+    search as githits_search,
+    code_files as githits_code_files,
+    code_read as githits_code_read,
+    code_grep as githits_code_grep,
+    pkg_deps as githits_pkg_deps,
+)
 from stack_exchange import (search_so, so_similar, so_tags_info, so_tags_wikis,
     get_questions_by_ids, search_users, search_tags, get_question_comments,
     get_answers_by_ids, get_questions_by_sort, get_users_by_ids)
@@ -304,6 +312,69 @@ async def handle_list_tools() -> list[Tool]:
                     "language": {"type": "string", "description": "Optional programming language; inferred from query if omitted"},
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="code_search",
+            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query supporting implicit AND, OR, parens, -exclude, and qualifiers (kind:, lang:, path:)"},
+                    "target": {"type": "string", "description": "Search scope: registry:name[@version] (e.g. npm:express) or github:org/repo"},
+                    "source": {"type": "string", "enum": ["docs", "code", "symbol"], "description": "Restrict results to a specific source type"},
+                    "lang": {"type": "string", "description": "Programming language filter"},
+                    "limit": {"type": "integer", "default": 10, "description": "Max results (1-100)"},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="code_files",
+            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express, pypi:requests)"},
+                    "path_prefix": {"type": "string", "description": "Optional path prefix filter (e.g. src/)"},
+                },
+                "required": ["spec"],
+            },
+        ),
+        Tool(
+            name="code_read",
+            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
+                    "path": {"type": "string", "description": "File path within the package (e.g. src/index.js)"},
+                },
+                "required": ["spec", "path"],
+            },
+        ),
+        Tool(
+            name="code_grep",
+            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
+                    "pattern": {"type": "string", "description": "Text pattern to search for"},
+                    "path_prefix": {"type": "string", "description": "Optional path prefix to narrow the search"},
+                },
+                "required": ["spec", "pattern"],
+            },
+        ),
+        Tool(
+            name="pkg_deps",
+            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by GitHits.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
+                },
+                "required": ["spec"],
             },
         ),
         Tool(
@@ -1094,33 +1165,46 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             return _res(r, r.get("success", False))
 
         elif name == "get_example":
-            if not GITHITS_API_TOKEN:
-                return _res({"error": "GITHITS_API_TOKEN not configured"}, False)
             query = str(arguments.get("query", ""))
-            if not query:
-                return _res({"error": "query is required"}, False)
             language = str(arguments.get("language", ""))
-            cmd = ["githits", "example", query, "--json"]
-            if language:
-                cmd.extend(["--lang", language])
-            env = {**__import__("os").environ, "GITHITS_API_TOKEN": GITHITS_API_TOKEN}
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            r = await githits_get_example(query, language)
+            return _res(r, r.get("success", False))
+
+        elif name == "code_search":
+            r = await githits_search(
+                query=str(arguments.get("query", "")),
+                target=str(arguments.get("target", "")),
+                source=str(arguments.get("source", "")),
+                lang=str(arguments.get("lang", "")),
+                limit=int(arguments.get("limit", 10)),
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-            except asyncio.TimeoutError:
-                proc.kill()
-                return _res({"error": "get_example timed out after 60s"}, False)
-            if proc.returncode != 0:
-                return _res({"error": f"get_example failed: {stderr.decode().strip()}"}, False)
-            try:
-                data = json.loads(stdout.decode())
-            except json.JSONDecodeError:
-                return _res({"error": f"get_example returned invalid JSON: {stdout.decode()[:500]}"}, False)
-            return _res(data)
+            return _res(r, r.get("success", False))
+
+        elif name == "code_files":
+            r = await githits_code_files(
+                spec=str(arguments.get("spec", "")),
+                path_prefix=str(arguments.get("path_prefix", "")),
+            )
+            return _res(r, r.get("success", False))
+
+        elif name == "code_read":
+            r = await githits_code_read(
+                spec=str(arguments.get("spec", "")),
+                path=str(arguments.get("path", "")),
+            )
+            return _res(r, r.get("success", False))
+
+        elif name == "code_grep":
+            r = await githits_code_grep(
+                spec=str(arguments.get("spec", "")),
+                pattern=str(arguments.get("pattern", "")),
+                path_prefix=str(arguments.get("path_prefix", "")),
+            )
+            return _res(r, r.get("success", False))
+
+        elif name == "pkg_deps":
+            r = await githits_pkg_deps(spec=str(arguments.get("spec", "")))
+            return _res(r, r.get("success", False))
 
         else:
             return _res({"error": f"unknown tool: {name}"}, False)
