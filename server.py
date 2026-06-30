@@ -5,8 +5,6 @@ import json
 
 from typing import Any
 
-import httpx
-
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
@@ -161,7 +159,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "type": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
+                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
                     "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
