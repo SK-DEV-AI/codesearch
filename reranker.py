@@ -13,8 +13,27 @@ _READER = None
 _WRITER = None
 
 
+async def _close_connection():
+    """Close the current connection so the worker can accept new ones."""
+    global _READER, _WRITER
+    if _READER is not None:
+        try:
+            _READER.feed_eof()
+        except Exception:
+            pass
+        _READER = None
+    if _WRITER is not None:
+        try:
+            _WRITER.close()
+            await _WRITER.wait_closed()
+        except Exception:
+            pass
+        _WRITER = None
+
+
 async def _ensure_worker():
     global _READER, _WRITER
+    await _close_connection()
     try:
         _READER, _WRITER = await asyncio.open_unix_connection(_SOCKET_PATH)
         return True
@@ -35,6 +54,7 @@ async def warmup() -> bool:
             result = json.loads(r)
             return not result.get("error")
         except Exception:
+            await _close_connection()
             return False
 
 
@@ -57,13 +77,13 @@ async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict
             await asyncio.wait_for(_WRITER.drain(), timeout=5)
         except (BrokenPipeError, OSError, asyncio.TimeoutError) as e:
             logger.warning(f"reranker: write failed: {e}")
-            _WRITER = None
+            await _close_connection()
             return passages[:top_k]
         try:
-            r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=120)
+            r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=30)
         except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.TimeoutError) as e:
             logger.warning(f"reranker: read failed: {e}")
-            _WRITER = None
+            await _close_connection()
             return passages[:top_k]
         try:
             result = json.loads(r)
