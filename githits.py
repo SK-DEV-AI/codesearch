@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from typing import Any
 
 from config import GITHITS_API_TOKEN
+
+_GITHITS_BIN = shutil.which("githits") or os.path.expanduser("~/.npm-global/bin/githits")
 
 
 def _build_env() -> dict[str, str]:
@@ -18,7 +21,7 @@ async def _run_githits(args: list[str], timeout: int = 60) -> dict[str, Any]:
     """Run a githits CLI command and return parsed JSON result."""
     if not GITHITS_API_TOKEN:
         return {"error": "GITHITS_API_TOKEN not configured"}
-    cmd = ["githits", *args, "--json"]
+    cmd = [_GITHITS_BIN, *args, "--json"]
     proc = await asyncio.create_subprocess_exec(
         *cmd, env=_build_env(),
         stdout=asyncio.subprocess.PIPE,
@@ -42,7 +45,7 @@ async def get_example(query: str, language: str = "") -> dict[str, Any]:
     args = ["example", query]
     if language:
         args.extend(["--lang", language])
-    result = await _run_githits(args, timeout=60)
+    result = await _run_githits(args, timeout=90)
     if "error" in result:
         return {"success": False, "error": result["error"]}
     if isinstance(result, dict):
@@ -61,7 +64,7 @@ async def search(query: str, target: str = "", source: str = "",
     if lang:
         args.extend(["--lang", lang])
     args.extend(["--limit", str(limit)])
-    result = await _run_githits(args, timeout=60)
+    result = await _run_githits(args, timeout=90)
     if "error" in result:
         return {"success": False, "error": result["error"]}
     return {"success": True, "results": result.get("results", result)}

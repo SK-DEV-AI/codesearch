@@ -1,4 +1,4 @@
-"""Shared reranker bridge — connects to Unix socket managed by free-websearch."""
+"""Shared reranker bridge — connects to Unix socket managed by websearch."""
 
 import asyncio
 import json

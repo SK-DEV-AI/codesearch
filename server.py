@@ -305,7 +305,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_example",
-            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-25s latency. Powered by GitHits.",
+            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-90s latency. Powered by GitHits.",
             inputSchema={
                 "type": "object",
                 "properties": {
