@@ -12,9 +12,10 @@ async def tavily_search(query: str, count: int = 10) -> dict:
         return {"success": False, "results": []}
     try:
         c = get_http_client()
-        r = await c.post(TAVILY_SEARCH,
-            json={"query": query, "search_depth": "basic", "max_results": count,
-                  "include_answer": False, "topic": "general"},
+        body = {"query": query, "search_depth": "advanced", "max_results": count,
+                "include_answer": True, "topic": "general", "include_images": True,
+                "auto_parameters": True}
+        r = await c.post(TAVILY_SEARCH, json=body,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
         if r.status_code != 200:
             return {"success": False, "results": []}
