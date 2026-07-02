@@ -127,13 +127,14 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="wiki",
-            description="Repo architecture and wiki via DeepWiki + CodeWiki.",
+            description="Repo architecture and wiki via DeepWiki + CodeWiki. For single-repo queries use owner+repo; for multi-repo questions pass repos (array of owner/repo strings, max 10).",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["search", "fetch", "ask", "architecture"]},
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
+                    "repos": {"type": "array", "items": {"type": "string"}, "description": "Array of owner/repo strings for multi-repo queries (DeepWiki ask supports up to 10)"},
                     "question": {"type": "string"},
                     "wiki_name": {"type": "string"},
                     "query": {"type": "string"},
@@ -563,14 +564,28 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 owner = str(arguments.get("owner", ""))
                 repo = str(arguments.get("repo", ""))
                 question = str(arguments.get("question", ""))
+                repos = arguments.get("repos")
+                if isinstance(repos, list) and repos:
+                    deep_repos = repos[:10]
+                    fallback_repo = repos[0]
+                    fallback_owner = ""
+                    fallback_repo_name = ""
+                    if "/" in fallback_repo:
+                        parts = fallback_repo.split("/", 1)
+                        fallback_owner, fallback_repo_name = parts[0], parts[1]
+                    else:
+                        fallback_owner, fallback_repo_name = owner, fallback_repo
+                else:
+                    deep_repos = None
+                    fallback_owner, fallback_repo_name = owner, repo
                 try:
-                    r = await asyncio.wait_for(deepwiki_ask(owner, repo, question), timeout=60)
+                    r = await asyncio.wait_for(deepwiki_ask(owner=owner, repo=repo, question=question, repos=deep_repos), timeout=60)
                 except asyncio.TimeoutError:
                     r = {"success": False, "error": "DeepWiki timeout"}
                 else:
                     if r.get("success"):
                         return _res(r)
-                r2 = await codewiki_ask_repo(owner, repo, question)
+                r2 = await codewiki_ask_repo(fallback_owner, fallback_repo_name, question)
                 return _res(r2, r2.get("success", False))
             elif action == "architecture":
                 r = await deepwiki_fetch(

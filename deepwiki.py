@@ -93,8 +93,9 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def deepwiki_ask(owner: str, repo: str, question: str, wiki_name: str = "") -> dict:
-    repo_label = f"{owner}/{repo}"
+async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
+                       wiki_name: str = "", repos: list[str] | None = None) -> dict:
+    repo_label = repos if repos else f"{owner}/{repo}"
     try:
         c = get_http_client()
         headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
@@ -102,7 +103,7 @@ async def deepwiki_ask(owner: str, repo: str, question: str, wiki_name: str = ""
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "codesearch", "version": "1.0"}}
         }, headers=headers)
-        ask_args: dict[str, str] = {"repoName": repo_label, "question": question}
+        ask_args: dict = {"repoName": repo_label, "question": question}
         if wiki_name:
             ask_args["wikiName"] = wiki_name
         r = await c.post(DEEPWIKI_MCP, json={
