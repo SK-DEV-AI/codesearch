@@ -54,6 +54,7 @@ from core_api import search_core_works, CORE_API_AVAILABLE
 from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info, get_advisory, query_by_hash
 from reranker import rerank as _rerank
 from tavily_search import tavily_search
+from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
 
@@ -395,6 +396,34 @@ async def handle_list_tools() -> list[Tool]:
                     "count": {"type": "integer", "default": 10, "description": "Max changelog entries"},
                 },
                 "required": ["name"],
+            },
+        ),
+        Tool(
+            name="enrich",
+            description="Fetch full content for a list of search results, deduplicate by embedding, and rerank by relevance. Give it results from any search tool plus the original query.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string"},
+                                "title": {"type": "string"},
+                                "text": {"type": "string"},
+                                "snippet": {"type": "string"},
+                                "source": {"type": "string"},
+                            },
+                        },
+                        "description": "List of result objects to enrich (url, title, text/snippet, source)",
+                    },
+                    "top_k": {"type": "integer", "default": 20, "description": "Max enriched results to return"},
+                    "max_fetch_size": {"type": "integer", "default": 50, "description": "Max results to fetch content for"},
+                    "include_html": {"type": "boolean", "default": False, "description": "Include raw HTML in content (default strips to text)"},
+                },
+                "required": ["query", "results"],
             },
         ),
     ]
@@ -1204,6 +1233,18 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
 
         elif name == "pkg_deps":
             r = await githits_pkg_deps(spec=str(arguments.get("spec", "")))
+            return _res(r, r.get("success", False))
+
+        elif name == "enrich":
+            query = str(arguments.get("query", ""))
+            raw_results = arguments.get("results", [])
+            top_k = int(arguments.get("top_k", 20))
+            max_fetch = int(arguments.get("max_fetch_size", 50))
+            include_html = bool(arguments.get("include_html", False))
+            if not raw_results or not isinstance(raw_results, list):
+                return _res({"error": "results must be a non-empty list"})
+            r = await enrich_results(query, raw_results, top_k=top_k,
+                                     max_fetch_size=max_fetch, include_html=include_html)
             return _res(r, r.get("success", False))
 
         else:
