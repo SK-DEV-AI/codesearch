@@ -4,6 +4,27 @@ import httpx
 
 from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client
 
+_session_id: str | None = None
+
+
+async def _get_session() -> str | None:
+    global _session_id
+    if not SOFA_KEY:
+        return None
+    if _session_id:
+        return _session_id
+    c = get_http_client()
+    r = await c.post(f"{SOFA_BASE}/sessions", headers={
+        "Authorization": f"Bearer {SOFA_KEY}",
+        "X-Sofa-Client-Name": "mcp-codesearch",
+        "X-Sofa-Model-Name": NV_EMBED_MODEL,
+    })
+    if r.status_code != 201:
+        _session_id = None
+        return None
+    _session_id = r.json()["session_id"]
+    return _session_id
+
 
 async def search_sofa(query: str, count: int = 5, content_type: str = "question",
                       page: int = 1, post_id: str = "",
@@ -14,19 +35,12 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
     cached = await _cached(cache_key)
     if cached is not None:
         return cached
-    session_id = None
     try:
         if not SOFA_KEY:
             return {"success": False, "error": "SOFA_KEY not configured"}
-        c = get_http_client()
-        sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
-            "Authorization": f"Bearer {SOFA_KEY}",
-            "X-Sofa-Client-Name": "mcp-codesearch",
-            "X-Sofa-Model-Name": NV_EMBED_MODEL,
-        })
-        if sess_r.status_code != 201:
-            return {"success": False, "error": f"SOFA session: HTTP {sess_r.status_code}"}
-        session_id = sess_r.json()["session_id"]
+        session_id = await _get_session()
+        if not session_id:
+            return {"success": False, "error": "SOFA: no session"}
         params: dict[str, str | int] = {
             "search": query, "per_page": min(count, 10),
             "content_type": content_type, "page": page,
@@ -37,6 +51,14 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
         r = await c.get(f"{SOFA_BASE}/posts",
                         params=params,
                         headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        if r.status_code == 401:
+            _session_id = None
+            session_id = await _get_session()
+            if not session_id:
+                return {"success": False, "error": "SOFA: session expired"}
+            c = get_http_client()
+            r = await c.get(f"{SOFA_BASE}/posts", params=params,
+                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
         if r.status_code != 200:
             return {"success": False, "error": f"SOFA search: HTTP {r.status_code}"}
         data = r.json()
@@ -64,14 +86,39 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
         return result
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
-    finally:
-        if session_id:
-            try:
-                c = get_http_client()
-                await c.delete(f"{SOFA_BASE}/sessions/{session_id}",
-                               headers={"Authorization": f"Bearer {SOFA_KEY}"})
-            except (httpx.HTTPError, ValueError):
-                pass
+
+
+async def _sofa_get_post(post_id: str) -> dict:
+    import httpx
+    try:
+        session_id = await _get_session()
+        if not session_id:
+            return {"success": False, "error": "SOFA: no session"}
+        c = get_http_client()
+        r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
+                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        if r.status_code == 401:
+            _session_id = None
+            session_id = await _get_session()
+            if not session_id:
+                return {"success": False, "error": "SOFA: session expired"}
+            r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
+                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        if r.status_code != 200:
+            return {"success": False, "error": f"SOFA post: HTTP {r.status_code}"}
+        item = r.json()
+        return {
+            "success": True,
+            "id": item.get("id"),
+            "title": item.get("title", ""),
+            "body": (item.get("body_markdown") or item.get("body", ""))[:3000],
+            "tags": item.get("tags", []),
+            "score": item.get("score"),
+            "content_type": item.get("content_type", ""),
+            "url": item.get("public_url"),
+        }
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
 
 
 async def _sofa_get_post(post_id: str) -> dict:

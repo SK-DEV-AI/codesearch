@@ -180,7 +180,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="so_search",
-            description="Stack Overflow: Stack Exchange API (free) or SOFA (needs SOFA_KEY).",
+            description="Stack Overflow: Stack Exchange API (free) or SOFA (requires SOFA_KEY).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -200,6 +200,9 @@ async def handle_list_tools() -> list[Tool]:
                     "todate": {"type": "string", "description": "Unix timestamp or date string for latest creation date"},
                     "views": {"type": "integer", "default": 0, "description": "Minimum view count"},
                     "answers": {"type": "integer", "default": 0, "description": "Minimum answer count"},
+                    "content_type": {"type": "string", "default": "question", "description": "SOFA only: question|til|blueprint|playbook"},
+                    "post_id": {"type": "string", "description": "SOFA only: get post by ID instead of searching"},
+                    "steering": {"type": "string", "description": "SOFA only: curation steering parameter"},
                 },
             },
         ),
