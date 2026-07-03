@@ -72,6 +72,7 @@ NV_BASE = "https://integrate.api.nvidia.com/v1"
 NV_EMBED_MODEL = "nvidia/nv-embedcode-7b-v1"
 NV_EMBED_DIMS = 4096
 SO_API = "https://api.stackexchange.com/2.3"
+SE_API_KEY = os.environ.get("SE_API_KEY", "")
 SOFA_KEY = os.environ.get("SOFA_KEY", "")
 SOFA_BASE = "https://agents.stackoverflow.com/api"
 

@@ -6,15 +6,22 @@ from typing import Any
 
 import httpx
 
-from config import SO_API, _cached, _set_cache, get_http_client
+from config import SE_API_KEY, SO_API, _cached, _set_cache, get_http_client
+
+
+def _sk(params: dict) -> dict:
+    """Inject SE API key into params dict if configured."""
+    if SE_API_KEY:
+        params["key"] = SE_API_KEY
+    return params
 
 
 async def _fetch_accepted_answer(accepted_id: int, site: str) -> str:
     try:
         c = get_http_client()
-        ar = await c.get(f"{SO_API}/answers/{accepted_id}", params={
+        ar = await c.get(f"{SO_API}/answers/{accepted_id}", params=_sk({
             "order": "desc", "sort": "votes", "site": site, "pagesize": 1, "filter": "withbody"
-        }, headers={"User-Agent": "mcp-codesearch/1.0"})
+        }), headers={"User-Agent": "mcp-codesearch/1.0"})
         if ar.status_code == 200:
             adata = ar.json()
             if adata.get("items"):
@@ -70,7 +77,7 @@ async def search_so(query: str, count: int = 5, tags: str = "",
         if page > 1:
             params["page"] = page
         c = get_http_client()
-        r = await c.get(f"{SO_API}/search/advanced", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/search/advanced", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange API: {r.status_code}"}
         data = r.json()
@@ -123,7 +130,7 @@ async def so_similar(title: str, tags: str = "", count: int = 5, site: str = "st
         if tags:
             params["tagged"] = tags
         c = get_http_client()
-        r = await c.get(f"{SO_API}/similar", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/similar", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /similar: {r.status_code}"}
         data = r.json()
@@ -146,7 +153,7 @@ async def so_tags_info(tags: str, site: str = "stackoverflow") -> dict:
         params: dict[str, Any] = {"site": site}
         tag = urllib.parse.quote(tags)
         c = get_http_client()
-        r = await c.get(f"{SO_API}/tags/{tag}/info", params=params,
+        r = await c.get(f"{SO_API}/tags/{tag}/info", params=_sk(params),
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /tags/info: {r.status_code}"}
@@ -173,7 +180,7 @@ async def so_tags_wikis(tags: str, count: int = 5, site: str = "stackoverflow") 
         params: dict[str, Any] = {"site": site, "pagesize": min(count, 50), "filter": "withbody"}
         tag = urllib.parse.quote(tags)
         c = get_http_client()
-        r = await c.get(f"{SO_API}/tags/{tag}/wikis", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/tags/{tag}/wikis", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /tags/wikis: {r.status_code}"}
         data = r.json()
@@ -200,7 +207,7 @@ async def _so_search_excerpts(query: str, count: int = 5, tags: str = "",
         if tags:
             params["tagged"] = tags
         c = get_http_client()
-        r = await c.get(f"{SO_API}/search/excerpts", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/search/excerpts", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /search/excerpts: {r.status_code}"}
         data = r.json()
@@ -224,9 +231,9 @@ async def get_answers_by_ids(ids: list[int], site: str = "stackoverflow") -> dic
     try:
         ids_str = ";".join(str(i) for i in ids[:100])
         c = get_http_client()
-        r = await c.get(f"{SO_API}/answers/{ids_str}", params={
+        r = await c.get(f"{SO_API}/answers/{ids_str}", params=_sk({
             "order": "desc", "sort": "votes", "site": site, "pagesize": min(len(ids), 100),
-            "filter": "withbody"}, headers={"User-Agent": "mcp-codesearch/1.0"})
+            "filter": "withbody"}), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200: return {"success": False, "error": f"SE answers: {r.status_code}"}
         data = r.json()
         results = []
@@ -251,7 +258,7 @@ async def get_questions_by_sort(sort: str = "hot", tagged: str = "", site: str =
             "pagesize": min(count, 100), "filter": "withbody"}
         if tagged: params["tagged"] = tagged
         c = get_http_client()
-        r = await c.get(f"{SO_API}/questions", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/questions", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200: return {"success": False, "error": f"SE questions: {r.status_code}"}
         data = r.json()
         results = []
@@ -274,8 +281,8 @@ async def get_users_by_ids(ids: list[int], site: str = "stackoverflow") -> dict:
     try:
         ids_str = ";".join(str(i) for i in ids[:100])
         c = get_http_client()
-        r = await c.get(f"{SO_API}/users/{ids_str}", params={
-            "order": "desc", "sort": "reputation", "site": site, "pagesize": min(len(ids), 100)},
+        r = await c.get(f"{SO_API}/users/{ids_str}", params=_sk({
+            "order": "desc", "sort": "reputation", "site": site, "pagesize": min(len(ids), 100)}),
             headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200: return {"success": False, "error": f"SE users: {r.status_code}"}
         data = r.json()
@@ -298,7 +305,7 @@ async def _so_tags_faq(tags: str, count: int = 5, site: str = "stackoverflow") -
         }
         c = get_http_client()
         r = await c.get(f"{SO_API}/tags/{urllib.parse.quote(tags)}/faq",
-                        params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+                        params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /tags/faq: {r.status_code}"}
         data = r.json()
@@ -326,7 +333,7 @@ async def _so_question_answers(question_id: int, count: int = 5, site: str = "st
         }
         c = get_http_client()
         r = await c.get(f"{SO_API}/questions/{question_id}/answers",
-                        params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+                        params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /questions/answers: {r.status_code}"}
         data = r.json()
@@ -349,7 +356,7 @@ async def get_questions_by_ids(ids: list[int], site: str = "stackoverflow") -> d
         ids_str = ";".join(str(i) for i in ids[:30])
         params: dict[str, Any] = {"site": site, "filter": "withbody"}
         c = get_http_client()
-        r = await c.get(f"{SO_API}/questions/{ids_str}", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/questions/{ids_str}", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /questions: {r.status_code}"}
         data = r.json()
@@ -375,7 +382,7 @@ async def search_users(query: str, site: str = "stackoverflow", count: int = 10)
     try:
         params: dict[str, Any] = {"site": site, "inname": query, "pagesize": min(count, 50)}
         c = get_http_client()
-        r = await c.get(f"{SO_API}/users", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/users", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /users: {r.status_code}"}
         data = r.json()
@@ -399,7 +406,7 @@ async def search_tags(query: str, site: str = "stackoverflow", count: int = 10) 
     try:
         params: dict[str, Any] = {"site": site, "inname": query, "pagesize": min(count, 50)}
         c = get_http_client()
-        r = await c.get(f"{SO_API}/tags", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/tags", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /tags: {r.status_code}"}
         data = r.json()
@@ -421,7 +428,7 @@ async def get_question_comments(question_id: int, site: str = "stackoverflow", c
     try:
         params: dict[str, Any] = {"site": site, "pagesize": min(count, 50), "filter": "withbody"}
         c = get_http_client()
-        r = await c.get(f"{SO_API}/questions/{question_id}/comments", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r = await c.get(f"{SO_API}/questions/{question_id}/comments", params=_sk(params), headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
             return {"success": False, "error": f"StackExchange /questions/comments: {r.status_code}"}
         data = r.json()

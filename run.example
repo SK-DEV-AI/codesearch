@@ -3,6 +3,7 @@
 export CONTEXT7_API_KEY="ctx7sk-YOUR_KEY"
 export GITHUB_TOKEN="ghp_YOUR_TOKEN"
 export NV_KEY="nvapi-YOUR_KEY"
+export SE_API_KEY="YOUR_KEY"
 export SOFA_KEY="YOUR_KEY"
 export LI_KEY="YOUR_KEY"
 export OSS_TOKEN="sonatype_pat_YOUR_TOKEN"
