@@ -73,23 +73,23 @@ async def _pkgseer_graphql(
 
 
 def _parse_spec(spec: str) -> dict[str, str]:
-    """Parse 'registry:name[@version]' into dict."""
+    """Parse 'registry:name[@version]' into GraphQL-compatible dict.
+    Provides both 'name' (deps/search queries) and 'packageName' (code nav queries).
+    Omits 'version' when not specified — empty string breaks PkgSeer.
+    """
     registry = "npm"
-    name = spec
+    package_name = spec
     version = ""
-    if ":" in name:
-        registry, name = name.split(":", 1)
-    if "@" in name and not name.startswith("@"):
-        name, version = name.rsplit("@", 1)
-    # Handle scoped npm packages like @angular/core
-    if name.count("@") > 0 and not version:
-        parts = name.rsplit("@", 1)
-        if parts[0].startswith("@"):
-            name = spec.split(":", 1)[1] if ":" in spec else spec  # keep original
-    # Normalise npm registries to uppercase
+    if ":" in package_name:
+        registry, package_name = package_name.split(":", 1)
+    if "@" in package_name and not package_name.startswith("@"):
+        package_name, version = package_name.rsplit("@", 1)
     registry_map = {"npm": "NPM", "pypi": "PYPI", "crates": "CRATESIO"}
     registry = registry_map.get(registry.lower(), registry.upper())
-    return {"registry": registry, "name": name, "version": version}
+    result = {"registry": registry, "name": package_name, "packageName": package_name}
+    if version:
+        result["version"] = version
+    return result
 
 
 def _extract_solution_id(text: str) -> tuple[str, str | None]:
@@ -140,7 +140,7 @@ async def search(query: str, target: str = "", source: str = "",
     targets = [{"name": query}]
     if target:
         parts = _parse_spec(target)
-        targets = [parts]
+        targets = [{"name": parts["name"], "registry": parts["registry"]}]
     variables = {
         "targets": targets,
         "query": query,
@@ -192,7 +192,7 @@ async def code_read(spec: str, path: str) -> dict[str, Any]:
     return {"success": True, "content": data.get("content", ""), "filePath": data.get("filePath", path)}
 
 
-GREP_REPO_QUERY = """query GrepRepo($registry:Registry $packageName:String $repoUrl:String $gitRef:String $version:String $waitTimeoutMs:Int $pattern:String! $patternType:GrepPatternType $caseSensitive:Boolean $pathSelectors:[GrepPathSelectorInput!] $extensions:[String!] $contextLinesBefore:Int $contextLinesAfter:Int $maxMatches:Int $maxMatchesPerFile:Int){grepRepo(registry:$registry packageName:$packageName repoUrl:$repoUrl gitRef:$gitRef version:$version waitTimeoutMs:$waitTimeoutMs pattern:$pattern patternType:$patternType caseSensitive:$caseSensitive pathSelectors:$pathSelectors extensions:$extensions contextLinesBefore:$contextLinesBefore contextLinesAfter:$contextLinesAfter maxMatches:$maxMatches maxMatchesPerFile:$maxMatchesPerFile){matches{filePath line lineContent contextBefore contextAfter}nextCursor hasMore totalMatches uniqueFilesMatched}}"""
+GREP_REPO_QUERY = """query GrepRepo($registry:Registry $packageName:String $repoUrl:String $gitRef:String $version:String $waitTimeoutMs:Int $pattern:String! $patternType:GrepPatternType $caseSensitive:Boolean $pathSelectors:[GrepPathSelectorInput!] $extensions:[String!] $allowUnscoped:Boolean $contextLinesBefore:Int $contextLinesAfter:Int $maxMatches:Int $maxMatchesPerFile:Int){grepRepo(registry:$registry packageName:$packageName repoUrl:$repoUrl gitRef:$gitRef version:$version waitTimeoutMs:$waitTimeoutMs pattern:$pattern patternType:$patternType caseSensitive:$caseSensitive pathSelectors:$pathSelectors extensions:$extensions allowUnscoped:$allowUnscoped contextLinesBefore:$contextLinesBefore contextLinesAfter:$contextLinesAfter maxMatches:$maxMatches maxMatchesPerFile:$maxMatchesPerFile){matches{filePath line lineContent contextBefore contextAfter}nextCursor hasMore totalMatches uniqueFilesMatched}}"""
 
 
 async def code_grep(spec: str, pattern: str, path_prefix: str = "") -> dict[str, Any]:
@@ -205,6 +205,7 @@ async def code_grep(spec: str, pattern: str, path_prefix: str = "") -> dict[str,
     variables = {
         **pkg, "pattern": pattern, "patternType": "LITERAL",
         "caseSensitive": False, "pathSelectors": path_selectors,
+        "allowUnscoped": not bool(path_prefix),
         "maxMatches": 50, "contextLinesBefore": 2, "contextLinesAfter": 2,
         "waitTimeoutMs": 60000,
     }
