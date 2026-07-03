@@ -1278,6 +1278,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         return _res({"error": str(e)}, False)
     except Exception as e:
         return _res({"error": f"{type(e).__name__}: {e}"}, False)
+    except BaseException as e:
+        return _res({"error": f"handler interrupted: {type(e).__name__}"}, False)
 
 
 async def _warmup_reranker():
