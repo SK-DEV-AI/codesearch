@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from config import _cached, _set_cache, get_http_client
+from config import get_http_client
 
 PACKAGE_CACHE = os.path.expanduser("~/.local/share/cortexkit/aft/pkg-cache")
 

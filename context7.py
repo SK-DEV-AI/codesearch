@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import urllib.parse
 from typing import Any
 
 import httpx
 
-from config import CONTEXT7_API_KEY, CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _cached, _KeyRotator, get_http_client
+from config import CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _KeyRotator, get_http_client
 
 _c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
 _next_c7_key = _c7_rotator.next

@@ -37,9 +37,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        search_vulnerabilities, analyze_license, quick_component_report)
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
-    readthedocs_translations, readthedocs_subprojects, readthedocs_builds,
-    readthedocs_redirects, readthedocs_notifications, readthedocs_remote_repos,
-    readthedocs_remote_orgs)
+    readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
     get_npm_time, get_npm_version, get_crates_versions, get_pypi_version,
     npm_get_version, crates_get_version, crates_get_readme, crates_get_summary)
@@ -914,14 +912,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await readthedocs_subprojects(str(arguments.get("project", "")))
             elif action == "rtd_builds":
                 r = await readthedocs_builds(str(arguments.get("project", "")))
-            elif action == "rtd_redirects":
-                r = await readthedocs_redirects(str(arguments.get("project", "")))
-            elif action == "rtd_notifications":
-                r = await readthedocs_notifications()
-            elif action == "rtd_remote_repos":
-                r = await readthedocs_remote_repos()
-            elif action == "rtd_remote_orgs":
-                r = await readthedocs_remote_orgs()
             else:
                 return _res({"error": f"unknown docs action: {action}"}, False)
             return _res(r, r.get("success", False))

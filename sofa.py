@@ -89,39 +89,6 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
 
 
 async def _sofa_get_post(post_id: str) -> dict:
-    import httpx
-    try:
-        session_id = await _get_session()
-        if not session_id:
-            return {"success": False, "error": "SOFA: no session"}
-        c = get_http_client()
-        r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
-                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
-        if r.status_code == 401:
-            _session_id = None
-            session_id = await _get_session()
-            if not session_id:
-                return {"success": False, "error": "SOFA: session expired"}
-            r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
-                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
-        if r.status_code != 200:
-            return {"success": False, "error": f"SOFA post: HTTP {r.status_code}"}
-        item = r.json()
-        return {
-            "success": True,
-            "id": item.get("id"),
-            "title": item.get("title", ""),
-            "body": (item.get("body_markdown") or item.get("body", ""))[:3000],
-            "tags": item.get("tags", []),
-            "score": item.get("score"),
-            "content_type": item.get("content_type", ""),
-            "url": item.get("public_url"),
-        }
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
-
-
-async def _sofa_get_post(post_id: str) -> dict:
     session_id = None
     try:
         c = get_http_client()
