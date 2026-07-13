@@ -9,7 +9,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, GITHITS_API_TOKEN, close_http_client, get_http_client
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
@@ -474,7 +474,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     stars=str(arguments.get("stars", "")),
                     forks=str(arguments.get("forks", "")),
                     topics=str(arguments.get("topics", "")),
-                    page=int(arguments.get("page", 1)),
                     in_qualifier=str(arguments.get("in_qualifier", "")),
                     exclude_qualifier=str(arguments.get("exclude_qualifier", "")),
                     merged=str(arguments.get("merged", "")),
@@ -538,8 +537,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     recursive=bool(arguments.get("recursive", True)))
             elif action == "search_labels":
                 r = await search_labels(query=str(arguments.get("query","")),
-                    repository_id=int(arguments.get("repository_id",0)),
-                    sort=str(arguments.get("sort","")), order=str(arguments.get("order","")),
                     count=int(arguments.get("count",10)))
             elif action == "search_topics":
                 r = await search_topics(query=str(arguments.get("query","")),
@@ -745,7 +742,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     site=str(arguments.get("site", "stackoverflow")),
                     question_id=int(arguments.get("question_id", 0)),
                     page=int(arguments.get("page", 1)),
-                    filter=str(arguments.get("filter", "")),
                 )
             return _res(r, r.get("success", False))
 
@@ -766,8 +762,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     tags=str(arguments.get("tags", "story")),
                     min_points=int(arguments.get("min_points", 0)),
                     min_comments=int(arguments.get("min_comments", 0)),
-                    before=int(arguments.get("before", 0)),
-                    after=int(arguments.get("after", 0)),
                 )
             else:
                 return _res({"error": f"unknown hn action: {action}"}, False)
@@ -995,8 +989,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(tavily_search(code_q, cnt))
             task_names.append("tavily")
 
-            deadline = min(int(arguments.get("deadline", 30)), 120)
-
             async def _gather_with_deadline(tks, names, dl):
                 sem = asyncio.Semaphore(15)
                 async def _run(task):
@@ -1019,7 +1011,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                         res[n] = asyncio.TimeoutError(f"{n} exceeded deadline")
                 return res
 
-            results = await _gather_with_deadline(tasks, task_names, deadline)
+            results = await _gather_with_deadline(tasks, task_names, 30)
             merged: dict[str, Any] = {}
             flat_items: list[dict] = []
             for name_, result in results.items():
@@ -1145,19 +1137,18 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await autocomplete_papers(
                     query=str(arguments.get("query", "")))
             elif action == "author_by_id":
-                r = await s2_author_by_id(author_id=str(arguments.get("author_id","")),
-                    fields=str(arguments.get("fields","")))
+                r = await s2_author_by_id(author_id=str(arguments.get("author_id","")))
             elif action == "bulk_search":
                 raw = str(arguments.get("paper_ids",""))
                 ids = [x.strip() for x in raw.split(",") if x.strip()]
-                r = await s2_bulk_search(ids, fields=str(arguments.get("fields","")))
+                r = await s2_bulk_search(ids)
             elif action == "recommendations_negatives":
                 pos_raw = str(arguments.get("positive_ids",""))
                 pos_ids = [x.strip() for x in pos_raw.split(",") if x.strip()]
                 neg_raw = str(arguments.get("negative_ids",""))
                 neg_ids = [x.strip() for x in neg_raw.split(",") if x.strip()]
                 r = await s2_recommendations_with_negatives(pos_ids, neg_ids or None,
-                    limit=int(arguments.get("count",10)), fields=str(arguments.get("fields","")))
+                    limit=int(arguments.get("count",10)))
             elif action == "arxiv_search":
                 c = get_http_client()
                 from urllib.parse import urlencode
