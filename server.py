@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from typing import Any
 
@@ -55,8 +56,14 @@ from tavily_search import tavily_search
 from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
+from openalex import search_openalex
 
 server = Server("codesearch")
+# Query->tag/platform/domain detection helpers for search_all precision
+_SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
+_LI_PLATFORM = re.compile(r"(?i)\b(python|javascript|typescript|rust|golang?|java|ruby|php|swift|kotlin|lua|c\+\+|csharp|dart|elixir|haskell|scala|perl|r)\b")
+_LI_PLATFORM_MAP = {"python":"pypi","javascript":"npm","typescript":"npm","rust":"cargo","golang":"go","java":"maven","ruby":"rubygems","php":"packagist","swift":"swift","kotlin":"maven","csharp":"nuget","dart":"pub","elixir":"hex","haskell":"hackage","scala":"maven","perl":"cpan"}
+
 
 _warmup_task: asyncio.Task | None = None
 
@@ -940,24 +947,28 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 task_names.append("github")
 
             if owner and repo:
-                tasks.append(deepwiki_fetch(owner, repo))
+                tasks.append(deepwiki_ask(owner=owner, repo=repo, question=query))
                 task_names.append("deepwiki")
 
             tasks.append(codewiki_search_repos(query, cnt // 3 + 1))
             task_names.append("codewiki")
 
-            tasks.append(search_so(query, cnt // 3 + 1, ""))
+            _so_tags_t = " ".join(_SE_TAGS.findall(query))
+            tasks.append(search_so(query, cnt // 3 + 1, tags=_so_tags_t, sort="votes"))
             task_names.append("so")
 
             if SOFA_KEY:
-                tasks.append(search_sofa(query, cnt // 3 + 1))
-                task_names.append("sofa")
+                sc = cnt // 5 + 1
+                for ct in ("question", "til", "blueprint"):
+                    tasks.append(search_sofa(query, sc, content_type=ct))
+                    task_names.append(f"sofa_{ct}")
 
-            tasks.append(search_hn(query, cnt // 3 + 1))
+            tasks.append(search_hn(query, cnt // 3 + 1, min_points=50))
             task_names.append("hn")
 
             if LI_KEY:
-                tasks.append(libraries_io_search(query, per_page=cnt))
+                _li_p = _LI_PLATFORM_MAP.get(next(iter(_LI_PLATFORM.findall(query) or []), "").lower(), "")
+                tasks.append(libraries_io_search(query, platform=_li_p, per_page=cnt))
                 task_names.append("libraries_io")
 
             tasks.append(npm_search(query, cnt))
@@ -969,15 +980,19 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(devdocs_search(lib, query) if lib else devdocs_list_docs())
             task_names.append("devdocs")
 
-            tasks.append(search_papers(query, cnt))
+            tasks.append(search_papers(query, cnt, fields_of_study="Computer Science"))
             task_names.append("s2_papers")
 
             if CORE_API_AVAILABLE:
-                tasks.append(search_core_works(query, cnt))
+                core_q = f"{query} language.code:en"
+                tasks.append(search_core_works(core_q, cnt))
                 task_names.append("core_papers")
 
-            tasks.append(tavily_search(code_q, cnt))
+            tasks.append(tavily_search(code_q, cnt, include_domains=["github.com", "docs.*", "dev.to", "stackoverflow.com"]))
             task_names.append("tavily")
+
+            tasks.append(search_openalex(query, cnt))
+            task_names.append("openalex")
 
             async def _gather_with_deadline(tks, names, dl):
                 sem = asyncio.Semaphore(15)
@@ -1022,10 +1037,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     for cr in (result.get("results", []) or []):
                         flat_items.append({"source": "github_code", "title": cr.get("file", ""), "text": cr.get("snippet", ""), "repo": cr.get("repo", ""), "url": cr.get("url", "")})
                 elif name_ == "deepwiki":
-                    arch_url = result.get("url") or f"https://deepwiki.com/{owner}/{repo}"
-                    arch_content = result.get("content") or result.get("detail", "")
-                    merged["architecture"] = {"url": arch_url, "content_preview": arch_content[:2000]}
-                    flat_items.append({"source": "deepwiki", "title": f"architecture: {owner}/{repo}", "text": arch_content[:3000], "url": arch_url})
+                    dw_answer = result.get("answer", "")
+                    dw_url = f"https://deepwiki.com/{owner}/{repo}" if owner and repo else ""
+                    merged["architecture"] = {"url": dw_url, "answer": dw_answer[:2000]}
+                    flat_items.append({"source": "deepwiki", "title": f"architecture Q&A: {owner}/{repo}", "text": dw_answer[:3000], "url": dw_url})
                 elif name_ == "codewiki":
                     merged["ai_wikis"] = result["results"]
                     for wr in (result.get("results", []) or []):
@@ -1034,12 +1049,17 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     merged["stackoverflow"] = result["results"]
                     for sr in (result.get("results", []) or []):
                         flat_items.append({"source": "stackoverflow", "title": sr.get("title", ""), "text": f"{sr.get('body','')} {sr.get('top_answer','')}", "url": sr.get("url", "")})
-                elif name_ == "sofa":
-                    merged["sofa"] = result["results"]
+                elif name_ in ("sofa_question", "sofa_til", "sofa_blueprint"):
+                    content_type_map = {"sofa_question": "question", "sofa_til": "til", "sofa_blueprint": "blueprint"}
+                    ct = content_type_map.get(name_, "question")
+                    sofa_key = f"sofa_{ct}"
+                    if sofa_key not in merged:
+                        merged[sofa_key] = []
+                    merged[sofa_key].extend(result.get("results", []))
                     if result.get("steering"):
                         merged["sofa_steering"] = result["steering"]
                     for sr in (result.get("results", []) or []):
-                        flat_items.append({"source": "sofa", "title": sr.get("title", ""), "text": sr.get("body", ""), "url": sr.get("url", "")})
+                        flat_items.append({"source": f"sofa_{ct}", "title": sr.get("title", ""), "text": sr.get("body", ""), "url": sr.get("url", "")})
                 elif name_ == "hn":
                     merged["hackernews"] = result["results"]
                     for hr in (result.get("results", []) or []):
@@ -1066,6 +1086,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     merged["core_papers"] = result.get("results", [])
                     for cr in (result.get("results", []) or []):
                         flat_items.append({"source": "core", "title": cr.get("title", ""), "text": cr.get("abstract", ""), "url": cr.get("downloadUrl", "") or ""})
+                elif name_ == "openalex":
+                    merged["openalex"] = result.get("results", [])
+                    for pr in (result.get("results", []) or []):
+                        flat_items.append({"source": "openalex", "title": pr.get("title", ""), "text": pr.get("snippet", ""), "url": pr.get("url", "")})
                 elif name_ == "tavily":
                     merged["tavily"] = result.get("results", [])
                     for tr in (result.get("results", []) or []):
@@ -1089,6 +1113,32 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=min(cnt * 2, 50))
                 except Exception:
                     pass
+
+            if merged.get("deduped_results"):
+                try:
+                    top = merged["deduped_results"][:3]
+                    ctx = "\n\n".join(f"[{i+1}] {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
+                                     for i, x in enumerate(top))
+                    import os
+                    groq_key = None
+                    for k in os.environ.get("GROQ_API_KEYS", "").split(","):
+                        k = k.strip()
+                        if k: groq_key = k; break
+                    if groq_key:
+                        from config import get_http_client
+                        c = get_http_client()
+                        resp = await c.post(
+                            "https://api.groq.com/openai/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                            json={"model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                                  "messages": [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
+                                               {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
+                                  "temperature": 0.3, "max_tokens": 256}, timeout=15)
+                        if resp.status_code == 200:
+                            merged["synthesis"] = resp.json()["choices"][0]["message"]["content"].strip()
+                except Exception:
+                    pass
+
             return _res(merged, bool(merged))
 
         elif name == "papers":
