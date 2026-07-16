@@ -1130,7 +1130,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                         resp = await c.post(
                             "https://api.groq.com/openai/v1/chat/completions",
                             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                            json={"model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                            json={"model": "openai/gpt-oss-120b",
                                   "messages": [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
                                                {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
                                   "temperature": 0.3, "max_tokens": 256}, timeout=15)
