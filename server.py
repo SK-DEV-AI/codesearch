@@ -58,7 +58,63 @@ from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
 from openalex import search_openalex
 
-server = Server("codesearch")
+server = Server("codesearch", instructions="""# CodeSearch MCP — Code Intelligence Toolkit
+
+A multi-engine code search, package analysis, and documentation server.
+
+## Tools by content type
+
+| Content type | Tool | Why |
+|---|---|---|
+| GitHub code/files/repos | `github(action="search"|"contents"|...)` | Structured API, not HTML |
+| Library documentation | `docs(query, library)` | Context7→ReadTheDocs→DevDocs fallback |
+| Repo wiki/architecture | `wiki(owner, repo)` | DeepWiki + CodeWiki Q&A |
+| Code across ecosystems | `search_all(query, language=...)` | 16 sources, dedup, reranked |
+| Academic papers | `papers(query, fields_of_study=...)` | Semantic Scholar + CORE + arXiv |
+| Stack Exchange | `so_search(action="stackexchange", tags=...)` | Structured answers, accepted flag |
+| Hacker News | `hn(action="search", tags="story", min_points=N)` | Structured threads |
+| OSS code examples | `get_example(query, language)` | Real working code from real repos (~1-2s) |
+| Package source browsing | `code_files(spec, path_prefix)` → `code_read(spec, path)` | No GitHub URL needed |
+| Package file grep | `code_grep(spec, pattern)` | Grep indexed source |
+| Package metadata/changelog | `pkg(action="info"|"changelog"|"upgrade_review")` | Versions, releases, vuln diff |
+| Dependency graph | `pkg_deps(spec)` | Transitive deps, conflict detection |
+| Library search | `search_libraries(name, platform)` | Libraries.io metadata |
+| Vulnerability scan | `vulns(action="scan", name, version)` | Sonatype Guide |
+| Semantic code search | `code_search(query, target, lang)` | GitHits indexed cross-ecosystem |
+
+## search_all pipeline (code-optimized)
+
+1. Code-specific query expansion (Groq) — pseudo-code + API calls + library terms.
+2. 17 parallel sources: context7 + GitHub + DeepWiki + CodeWiki + SO + SOFA + HN + Libraries.io + npm + crates + DevDocs + Semantic Scholar + CORE API + arXiv + Tavily + OpenAlex.
+3. NIM embedding dedup (nv-embedcode-7b-v1) — source-clustered cosine dedup.
+4. BM25 hybrid rank — keyword/syntax scoring + embedding relevance.
+5. Cross-encoder reranker — gte-reranker-modernbert-base.
+
+## Qualifier hints
+
+- `language` for code/github/search_all — always pass when ecosystem is known.
+- `tags` for SO queries — always narrow scope (e.g. 'python', 'react').
+- `owner`/`repo` for GitHub-specific queries.
+- `accepted=True` on so_search for verified answers.
+- `fields_of_study` on papers for domain filtering.
+- `min_points`/`min_comments` on hn for quality filtering.
+- `count` to control results (default 10, max 50 for search_all).
+
+## API key impact
+
+All pre-configured in run script. Graceful degradation:
+- `GITHUB_TOKEN` — rate-limited without token
+- `NV_KEY` — dedup disabled
+- `CONTEXT7_API_KEY` — context7 source rate-limited
+- `SE_API_KEY` — 300/day unauthenticated, 10K/day with key
+- `SOFA_KEY` — SOFA results skipped
+- `LI_KEY` — Libraries.io skipped
+- `OSS_TOKEN` — vulns rate-limited
+- `TAVILY_KEYS` — Tavily results skipped
+- `GROQ_API_KEYS` — code expansion disabled
+- `GITHITS_API_TOKEN` — GitHits tools unavailable
+- `CORE_API_KEY` — CORE results skipped
+""")
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
 _LI_PLATFORM = re.compile(r"(?i)\b(python|javascript|typescript|rust|golang?|java|ruby|php|swift|kotlin|lua|c\+\+|csharp|dart|elixir|haskell|scala|perl|r)\b")

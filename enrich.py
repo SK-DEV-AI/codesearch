@@ -5,6 +5,7 @@ import asyncio
 from config import get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank
+from security import SecurityError, validate_url as _validate_url
 
 
 async def enrich_results(
@@ -26,6 +27,12 @@ async def enrich_results(
         url = str(r.get("url", ""))
         if not url:
             r["__fetch_error"] = "no url"
+            return r
+        # SSRF validation
+        try:
+            url = await _validate_url(url)
+        except SecurityError as e:
+            r["__fetch_error"] = str(e)
             return r
         async with sem:
             if asyncio.get_event_loop().time() > deadline:
