@@ -58,62 +58,63 @@ from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
 from openalex import search_openalex
 
-server = Server("codesearch", instructions="""# CodeSearch MCP — Code Intelligence Toolkit
+server = Server("codesearch", instructions="""# CodeSearch MCP
 
-A multi-engine code search, package analysis, and documentation server.
+Code search, package analysis, documentation, vulnerability scanning.
 
-## Tools by content type
+## Tools
 
-| Content type | Tool | Why |
-|---|---|---|
-| GitHub code/files/repos | `github(action="search"|"contents"|...)` | Structured API, not HTML |
-| Library documentation | `docs(query, library)` | Context7→ReadTheDocs→DevDocs fallback |
-| Repo wiki/architecture | `wiki(owner, repo)` | DeepWiki + CodeWiki Q&A |
-| Code across ecosystems | `search_all(query, language=...)` | 16 sources, dedup, reranked |
-| Academic papers | `papers(query, fields_of_study=...)` | Semantic Scholar + CORE + arXiv |
-| Stack Exchange | `so_search(action="stackexchange", tags=...)` | Structured answers, accepted flag |
-| Hacker News | `hn(action="search", tags="story", min_points=N)` | Structured threads |
-| OSS code examples | `get_example(query, language)` | Real working code from real repos (~1-2s) |
-| Package source browsing | `code_files(spec, path_prefix)` → `code_read(spec, path)` | No GitHub URL needed |
-| Package file grep | `code_grep(spec, pattern)` | Grep indexed source |
-| Package metadata/changelog | `pkg(action="info"|"changelog"|"upgrade_review")` | Versions, releases, vuln diff |
-| Dependency graph | `pkg_deps(spec)` | Transitive deps, conflict detection |
-| Library search | `search_libraries(name, platform)` | Libraries.io metadata |
-| Vulnerability scan | `vulns(action="scan", name, version)` | Sonatype Guide |
-| Semantic code search | `code_search(query, target, lang)` | GitHits indexed cross-ecosystem |
+**github**(action, owner, repo, ...) — GitHub API: search code/repos/issues, read files, tree, commits.
 
-## search_all pipeline (code-optimized)
+**docs**(query, library, fast) — Context7→ReadTheDocs→DevDocs fallback.
 
-1. Code-specific query expansion (Groq) — pseudo-code + API calls + library terms.
-2. 17 parallel sources: context7 + GitHub + DeepWiki + CodeWiki + SO + SOFA + HN + Libraries.io + npm + crates + DevDocs + Semantic Scholar + CORE API + arXiv + Tavily + OpenAlex.
-3. NIM embedding dedup (nv-embedcode-7b-v1) — source-clustered cosine dedup.
-4. BM25 hybrid rank — keyword/syntax scoring + embedding relevance.
-5. Cross-encoder reranker — gte-reranker-modernbert-base.
+**wiki**(owner, repo, repos=[], question=ask) — DeepWiki + CodeWiki architecture Q&A.
 
-## Qualifier hints
+**search_all**(query, language, owner, repo, count) — 17 sources: SO+SOFA+HN+GitHub+DeepWiki+CodeWiki+DevDocs+S2+CORE+arXiv+OpenAlex+libraries.io+npm+crates+Tavily+Context7 → dedup → hybrid rank → rerank.
 
-- `language` for code/github/search_all — always pass when ecosystem is known.
-- `tags` for SO queries — always narrow scope (e.g. 'python', 'react').
-- `owner`/`repo` for GitHub-specific queries.
-- `accepted=True` on so_search for verified answers.
-- `fields_of_study` on papers for domain filtering.
-- `min_points`/`min_comments` on hn for quality filtering.
-- `count` to control results (default 10, max 50 for search_all).
+**papers**(query, fields_of_study, year, count) — S2 + CORE + arXiv with FoS filter.
 
-## API key impact
+**so_search**(action=stackexchange|sofa, tags, accepted, count) — Stack Exchange (accepted/resolved) or SOFA (community posts).
 
-All pre-configured in run script. Graceful degradation:
-- `GITHUB_TOKEN` — rate-limited without token
-- `NV_KEY` — dedup disabled
-- `CONTEXT7_API_KEY` — context7 source rate-limited
-- `SE_API_KEY` — 300/day unauthenticated, 10K/day with key
-- `SOFA_KEY` — SOFA results skipped
-- `LI_KEY` — Libraries.io skipped
-- `OSS_TOKEN` — vulns rate-limited
-- `TAVILY_KEYS` — Tavily results skipped
-- `GROQ_API_KEYS` — code expansion disabled
-- `GITHITS_API_TOKEN` — GitHits tools unavailable
-- `CORE_API_KEY` — CORE results skipped
+**hn**(action=search, tags=story|show|ask, min_points, count) — structured HN threads.
+
+**get_example**(query, language) — real OSS code from indexed repos (~1-2s).
+
+**code_search**(query, target=ns:lib, lang) — GitHits cross-ecosystem symbol/function search.
+
+**code_files**(spec, path_prefix) → **code_read**(spec, path) — browse package source.
+
+**code_grep**(spec, pattern, path_prefix) — grep indexed package source.
+
+**pkg**(name, registry=auto, action=info|changelog|upgrade_review|files|read) — package metadata.
+
+**pkg_deps**(spec) — transitive deps + conflict detection.
+
+**search_libraries**(name, platform) — Libraries.io metadata.
+
+**vulns**(action=scan|detail|latest_version|search|license, name, version) — Sonatype scanning.
+
+**search_package**(name, registry=auto) — npm/PyPI/crates metadata/versions.
+
+**enrich**(query, results, top_k, max_fetch_size) — fetch+NIM dedup+BM25+rerank for external results.
+
+## Pipeline (search_all)
+
+1. Groq code expansion: pseudo-code + API call + library term variants.
+2. 17 parallel sources.
+3. NIM nv-embedcode-7b-v1 dedup (source-clustered cosine).
+4. BM25 hybrid rank (keyword/syntax + embedding).
+5. gte-reranker (704 tokens).
+
+## Params
+
+- `language`: code/github/search_all — always pass known languages
+- `tags`: SO queries — scope to ecosystem (python, react, rust)
+- `owner`/`repo`: GitHub-specific queries
+- `accepted=true`: so_search for resolved/verified answers
+- `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
+- `min_points`/`min_comments`: HN quality floor
+- `count`: results (default 10, max 50 search_all)
 """)
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
