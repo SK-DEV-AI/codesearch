@@ -269,7 +269,7 @@ async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
         c = get_http_client()
         r = await c.post(f"{S2_PAPER}/batch", json={"ids": ids[:500]}, params={"fields": f}, headers=headers)
         if r.status_code != 200: return {"success": False, "error": f"S2 batch: {r.status_code}"}
-        data: list = r.json()
+        data = r.json().get("data", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
             "citationCount": i.get("citationCount",0),
@@ -290,7 +290,7 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
         c = get_http_client()
         r = await c.post(S2_RECOMMENDATIONS.replace("/forpaper",""), json=body, params={"fields": f}, headers=headers)
         if r.status_code != 200: return {"success": False, "error": f"S2 recs: {r.status_code}"}
-        data: list = r.json()
+        data = r.json().get("recommendedPapers", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
             "citationCount": i.get("citationCount",0),

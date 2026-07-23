@@ -415,7 +415,7 @@ async def crates_get_version(name: str, version: str) -> dict:
     try:
         c = get_http_client()
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
-            params={"per_page": 1}, headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+            params={"per_page": 100}, headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200: return {"success": False, "error": f"crates.io: {r.status_code}"}
         vers = r.json().get("versions", [])
         found = next((v for v in vers if v.get("num") == version), {})

@@ -31,6 +31,21 @@ async def _close_connection():
         _WRITER = None
 
 
+async def _is_healthy() -> bool:
+    """Quick ping to check if the existing worker socket is alive."""
+    global _WRITER, _READER
+    if _WRITER is None or _READER is None:
+        return False
+    try:
+        req = json.dumps({"query": "ping", "passages": [{"snippet": ""}], "top_k": 1})
+        _WRITER.write((req + "\n").encode())
+        await asyncio.wait_for(_WRITER.drain(), timeout=2)
+        r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=5)
+        return not json.loads(r).get("error")
+    except Exception:
+        return False
+
+
 async def _ensure_worker():
     global _READER, _WRITER
     await _close_connection()
@@ -44,6 +59,8 @@ async def _ensure_worker():
 async def warmup() -> bool:
     async with _LOCK:
         global _READER, _WRITER
+        if await _is_healthy():
+            return True
         if not await _ensure_worker():
             return False
         try:
@@ -58,13 +75,23 @@ async def warmup() -> bool:
             return False
 
 
+def fallback_sort(passages: list[dict], top_k: int) -> list[dict]:
+    """Sort passages by best available relevance score when reranker fails."""
+    scored = []
+    for p in passages:
+        score = p.get("_rel") or p.get("_relevance") or p.get("_hybrid") or 0
+        scored.append((score, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored[:top_k]]
+
+
 async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict]:
     if not passages:
         return []
     async with _LOCK:
         global _READER, _WRITER
-        if not await _ensure_worker():
-            return passages[:top_k]
+        if not await _is_healthy() and not await _ensure_worker():
+            return fallback_sort(passages, top_k)
         normalized = []
         for p in passages:
             item = dict(p)
@@ -78,20 +105,20 @@ async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict
         except (BrokenPipeError, OSError, asyncio.TimeoutError) as e:
             logger.warning(f"reranker: write failed: {e}")
             await _close_connection()
-            return passages[:top_k]
+            return fallback_sort(passages, top_k)
         try:
             r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=30)
         except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.TimeoutError) as e:
             logger.warning(f"reranker: read failed: {e}")
             await _close_connection()
-            return passages[:top_k]
+            return fallback_sort(passages, top_k)
         try:
             result = json.loads(r)
         except json.JSONDecodeError:
-            return passages[:top_k]
+            return fallback_sort(passages, top_k)
     if result.get("error"):
         logger.warning(f"reranker error: {result['error']}")
-        return passages[:top_k]
+        return fallback_sort(passages, top_k)
     scored = result.get("scores", [])
     for s in scored:
         if "score" in s:

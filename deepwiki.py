@@ -96,29 +96,49 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
 async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
                        wiki_name: str = "", repos: list[str] | None = None) -> dict:
     repo_label = repos if repos else f"{owner}/{repo}"
-    try:
-        c = get_http_client()
-        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-        await c.post(DEEPWIKI_MCP, json={
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "codesearch", "version": "1.0"}}
-        }, headers=headers)
-        ask_args: dict = {"repoName": repo_label, "question": question}
-        if wiki_name:
-            ask_args["wikiName"] = wiki_name
-        r = await c.post(DEEPWIKI_MCP, json={
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "ask_question", "arguments": ask_args}
-        }, headers=headers)
-        if r.status_code != 200:
-            return {"success": False, "error": f"DeepWiki HTTP {r.status_code}"}
-        data = _parse_mcp_sse(r.text)
-        if not data or "result" not in data:
-            return {"success": False, "error": "no result from DeepWiki"}
-        answer = ""
-        for item in data["result"].get("content", []):
-            if item.get("type") == "text":
-                answer += item["text"] + "\n"
-        return {"success": True, "answer": answer.strip(), "source": "deepwiki"}
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+    last_err = None
+    c = get_http_client()
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    for attempt in range(MAX_DEEPWIKI_RETRIES):
+        try:
+            init = await c.post(DEEPWIKI_MCP, json={
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "codesearch", "version": "1.0"}}
+            }, headers=headers)
+            if init.status_code != 200:
+                last_err = f"init failed {init.status_code}"
+                if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                    await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                    continue
+                return {"success": False, "error": last_err}
+            ask_args: dict = {"repoName": repo_label, "question": question}
+            if wiki_name:
+                ask_args["wikiName"] = wiki_name
+            r = await c.post(DEEPWIKI_MCP, json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "ask_question", "arguments": ask_args}
+            }, headers=headers)
+            if r.status_code != 200:
+                last_err = f"DeepWiki HTTP {r.status_code}"
+                if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                    await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                    continue
+                return {"success": False, "error": last_err}
+            data = _parse_mcp_sse(r.text)
+            if not data or "result" not in data:
+                last_err = "no result from DeepWiki"
+                if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                    await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                    continue
+                return {"success": False, "error": last_err}
+            answer = ""
+            for item in data["result"].get("content", []):
+                if item.get("type") == "text":
+                    answer += item["text"] + "\n"
+            return {"success": True, "answer": answer.strip(), "source": "deepwiki"}
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
+            last_err = str(e)
+            if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                continue
+    return {"success": False, "error": last_err}

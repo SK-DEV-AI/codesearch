@@ -33,7 +33,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
                         exclude_qualifier: str = "",
                         merged: str = "", head: str = "", base: str = "",
                         review: str = "") -> dict:
-    cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}"
+    cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}:{page}:{exclude_qualifier}:{merged}:{head}:{base}:{review}:{in_qualifier}:{is_}:{pushed}:{stars}:{forks}:{topics}:{labels}:{size}"
     cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}
@@ -280,7 +280,7 @@ async def search_commits(query: str, count: int = 10, sort: str = "", order: str
                           committer: str = "", author_date: str = "", committer_date: str = "",
                           merge: str = "", hash_: str = "", page: int = 1) -> dict:
     """Search commits with qualifiers."""
-    cache_key = f"gh_commits:{query}:{owner}:{repo}:{count}:{sort}:{order}:{author}:{committer}"
+    cache_key = f"gh_commits:{query}:{owner}:{repo}:{count}:{sort}:{order}:{author}:{committer}:{hash_}:{author_date}:{committer_date}:{merge}:{page}"
     cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}
@@ -340,13 +340,17 @@ async def gh_get_branches(owner: str, repo: str) -> dict:
     if cached is not None:
         return cached
     try:
+        repo_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}", headers=await _gh_headers())
+        default_branch = "main"
+        if repo_r.status_code == 200:
+            default_branch = repo_r.json().get("default_branch", "main")
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/branches", headers=await _gh_headers())
         if r.status_code != 200:
             return {"success": False, "error": f"GitHub {r.status_code}"}
         branches = [{"name": b.get("name", ""), "sha": b.get("commit", {}).get("sha", ""),
                       "protected": b.get("protected", False)}
                      for b in (r.json() or [])]
-        result = {"success": True, "branches": branches, "default_branch": "main"}
+        result = {"success": True, "branches": branches, "default_branch": default_branch}
         await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError) as e:
@@ -380,13 +384,18 @@ async def gh_get_tree(owner: str, repo: str, tree_sha: str = "HEAD", recursive: 
         return cached
     try:
         if tree_sha == "HEAD":
-            ref_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/refs/heads/main",
+            repo_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}",
                 headers=await _gh_headers())
-            if ref_r.status_code != 200:
-                ref_r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/refs/heads/master",
-                    headers=await _gh_headers())
-            if ref_r.status_code == 200:
-                tree_sha = ref_r.json().get("object", {}).get("sha", "HEAD")
+            if repo_r.status_code == 200:
+                tree_sha = repo_r.json().get("default_branch", "HEAD")
+            else:
+                for branch in ("main", "master"):
+                    ref_r = await _http_request("GET",
+                        f"{GH_API}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+                        headers=await _gh_headers())
+                    if ref_r.status_code == 200:
+                        tree_sha = ref_r.json().get("object", {}).get("sha", "HEAD")
+                        break
         params = {"recursive": "1"} if recursive else {}
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/trees/{tree_sha}",
             params=params, headers=await _gh_headers())
@@ -433,7 +442,7 @@ async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
 async def search_labels(query: str, repository_id: int = 0, sort: str = "",
                         order: str = "", count: int = 10) -> dict:
     """Search labels within a repository by repository_id."""
-    cache_key = f"gh_lbl:{query}:{repository_id}"
+    cache_key = f"gh_lbl:{query}:{repository_id}:{sort}:{order}"
     cached = await _cached(cache_key)
     if cached is not None:
         return cached

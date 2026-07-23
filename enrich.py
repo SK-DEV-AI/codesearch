@@ -4,7 +4,7 @@ import asyncio
 
 from config import get_http_client
 from embed import _embed, _dedup_rank, _hybrid_rank
-from reranker import rerank as _rerank
+from reranker import rerank as _rerank, fallback_sort
 from security import SecurityError, validate_url as _validate_url
 
 
@@ -78,7 +78,7 @@ async def enrich_results(
     try:
         reranked = await _rerank(query, deduped, top_k=min(top_k, len(deduped)))
     except Exception:
-        reranked = deduped[:top_k]
+        reranked = fallback_sort(deduped, top_k)
 
     result_list: list[dict] = []
     for r in reranked:

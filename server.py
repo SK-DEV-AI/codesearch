@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 
 from typing import Any
+
+logger = logging.getLogger("codesearch")
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
@@ -1168,33 +1171,29 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             if merged.get("deduped_results"):
                 try:
                     merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=min(cnt * 2, 50))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("reranker failed: %s", e)
 
             if merged.get("deduped_results"):
                 try:
                     top = merged["deduped_results"][:3]
                     ctx = "\n\n".join(f"[{i+1}] {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
                                      for i, x in enumerate(top))
-                    import os
-                    groq_key = None
-                    for k in os.environ.get("GROQ_API_KEYS", "").split(","):
-                        k = k.strip()
-                        if k: groq_key = k; break
-                    if groq_key:
-                        from config import get_http_client
+                    _groq_keys = _KeyRotator("GROQ_API_KEYS")
+                    if _groq_keys.has_keys:
                         c = get_http_client()
                         resp = await c.post(
                             "https://api.groq.com/openai/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                            headers={"Authorization": f"Bearer {_groq_keys.next()}", "Content-Type": "application/json"},
                             json={"model": "openai/gpt-oss-120b",
                                   "messages": [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
                                                {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
                                   "temperature": 0.3, "max_tokens": 256}, timeout=15)
                         if resp.status_code == 200:
                             merged["synthesis"] = resp.json()["choices"][0]["message"]["content"].strip()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("synthesis failed: %s", e)
+                    merged["synthesis_error"] = str(e)
 
             return _res(merged, bool(merged))
 
