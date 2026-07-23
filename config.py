@@ -105,9 +105,10 @@ HN_API = "https://hn.algolia.com/api/v1"
 
 
 async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
-    """HTTP request with automatic retry on transient failures."""
+    """HTTP request with automatic retry on transient failures and redirect following."""
     retries = kwargs.pop("retries", 2)
     kwargs.pop("timeout", None)
+    kwargs.setdefault("follow_redirects", True)
     last_err: Exception | None = None
     c = get_http_client()
     for attempt in range(retries + 1):
