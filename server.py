@@ -31,6 +31,7 @@ from pkgseer import (
     jsdelivr_list_files,
     jsdelivr_read_file,
 )
+from analyze import analyze_repo
 from searchcode import (
     analyze as searchcode_analyze,
     search as searchcode_search,
@@ -106,6 +107,8 @@ Code search, package analysis, documentation, vulnerability scanning.
 **vulns**(action=scan|detail|...|quick_report, name, version) — Sonatype scanning.
 
 **search_package**(name, registry=auto) — raw registry queries (npm/PyPI/crates/deeps.dev). For composite use **pkg**.
+
+**analyze**(repository) — deep repo analysis: parallel GitHub metadata + SearchCode + DeepWiki + CodeWiki in one call.
 
 **enrich**(query, results, top_k, max_fetch_size) — fetch+NIM dedup+BM25+rerank for external results.
 
@@ -515,6 +518,17 @@ async def handle_list_tools() -> list[Tool]:
                     "include_html": {"type": "boolean", "default": False, "description": "Include raw HTML in content (default strips to text)"},
                 },
                 "required": ["query", "results"],
+            },
+        ),
+        Tool(
+            name="analyze",
+            description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Accepts GitHub URLs or owner/repo strings. e.g. analyze(repository='sst/opencode')",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repository": {"type": "string", "description": "GitHub repo: URL (https://github.com/owner/repo) or owner/repo string"},
+                },
+                "required": ["repository"],
             },
         ),
     ]
@@ -1433,6 +1447,11 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 return _res({"error": "results must be a non-empty list"})
             r = await enrich_results(query, raw_results, top_k=top_k,
                                      max_fetch_size=max_fetch, include_html=include_html)
+            return _res(r, r.get("success", False))
+
+        elif name == "analyze":
+            repo_str = str(arguments.get("repository", ""))
+            r = await analyze_repo(repo_str)
             return _res(r, r.get("success", False))
 
         else:
