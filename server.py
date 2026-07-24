@@ -22,13 +22,21 @@ from github_api import (search_github, fetch_readme, gh_get_contents, gh_get_lan
     gh_get_tags, gh_get_tree, search_labels, search_topics)
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
-from githits import (
-    get_example as githits_get_example,
-    search as githits_search,
-    code_files as githits_code_files,
-    code_read as githits_code_read,
-    code_grep as githits_code_grep,
-    pkg_deps as githits_pkg_deps,
+from pkgseer import (
+    search as pkgseer_search,
+    code_files as pkgseer_code_files,
+    code_read as pkgseer_code_read,
+    code_grep as pkgseer_code_grep,
+    pkg_deps as pkgseer_pkg_deps,
+    jsdelivr_list_files,
+    jsdelivr_read_file,
+)
+from searchcode import (
+    analyze as searchcode_analyze,
+    search as searchcode_search,
+    file_tree as searchcode_file_tree,
+    get_file as searchcode_get_file,
+    findings as searchcode_findings,
 )
 from stack_exchange import (search_so, so_similar, so_tags_info, so_tags_wikis,
     get_questions_by_ids, search_users, search_tags, get_question_comments,
@@ -81,11 +89,11 @@ Code search, package analysis, documentation, vulnerability scanning.
 
 **hn**(action=search, tags=story|show|ask, min_points, count) — structured HN threads.
 
-**get_example**(query, language) — real OSS code from indexed repos (~1-2s).
+**searchcode**(action=analyze|search|findings|file_tree|get_file, repository, ...) — per-repo code intelligence via SearchCode. No auth, no rate limits. Unique: analyze (instant repo overview) and findings (code quality issues).
 
-**code_search**(query, target=ns:lib, lang) — GitHits cross-ecosystem symbol/function search.
+**code_search**(query, target=ns:lib, lang) — PkgSeer cross-ecosystem symbol/function search.
 
-**code_files**(spec, path_prefix) → **code_read**(spec, path) — browse package source.
+**code_files**(spec, path_prefix) → **code_read**(spec, path) — browse package source. jsDelivr-backed for npm (no auth, faster).
 
 **code_grep**(spec, pattern, path_prefix) — grep indexed package source.
 
@@ -373,15 +381,26 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="get_example",
-            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-90s latency. Powered by GitHits. e.g. get_example(query='read a file line by line in python', language='python')",
+            name="searchcode",
+            description="Per-repo code intelligence via SearchCode (free, no auth). Use analyze for instant repo overview (languages, complexity, tech stack, credentials), search for searching code within a repo, findings for code quality issues, file_tree to list files, or get_file to read a file. No rate limits. e.g. searchcode(action='analyze', repository='https://github.com/expressjs/express')",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Natural-language description of the code pattern or API usage you need"},
-                    "language": {"type": "string", "description": "Optional programming language; inferred from query if omitted"},
+                    "action": {"type": "string", "enum": ["analyze", "search", "findings", "file_tree", "get_file"], "description": "analyze=repo overview, search=search code, findings=quality issues, file_tree=list files, get_file=read file"},
+                    "repository": {"type": "string", "description": "Git URL of a public remote repository (e.g. https://github.com/expressjs/express)"},
+                    "query": {"type": "string", "description": "Search query (for search action)"},
+                    "path": {"type": "string", "description": "Subdirectory path filter (for analyze/findings/file_tree)"},
+                    "language": {"type": "string", "description": "Language filter (for analyze action)"},
+                    "detail_level": {"type": "string", "enum": ["summary", "full"], "default": "summary", "description": "Response verbosity (for analyze action)"},
+                    "symbol_name": {"type": "string", "description": "Function/class name to extract (for get_file action)"},
+                    "case_sensitive": {"type": "boolean", "default": False, "description": "Case-sensitive search (for search action)"},
+                    "context_lines": {"type": "integer", "default": 2, "description": "Context lines around matches (for search action)"},
+                    "max_results": {"type": "integer", "default": 10, "description": "Max results (for search/findings)"},
+                    "severity": {"type": "string", "enum": ["error", "warning", "info"], "description": "Filter by severity (for findings action)"},
+                    "category": {"type": "string", "enum": ["security", "deprecated", "safety", "correctness", "maintainability", "accessibility", "modernization", "performance", "concurrency"], "description": "Filter findings by category (for findings action)"},
+                    "start_line": {"type": "integer", "default": 1, "description": "Start line (for get_file without symbol_name)"},
+                    "end_line": {"type": "integer", "description": "End line (for get_file without symbol_name)"},
                 },
-                "required": ["query"],
             },
         ),
         Tool(
@@ -401,7 +420,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_files",
-            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. Powered by GitHits. e.g. code_files(spec='npm:express')",
+            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: 3-5x faster, no auth). e.g. code_files(spec='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -413,7 +432,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_read",
-            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. Powered by GitHits. e.g. code_read(spec='npm:express', path='src/index.js')",
+            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: CDN-served, no auth). e.g. code_read(spec='npm:express', path='src/index.js')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1298,14 +1317,44 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 )
             return _res(r, r.get("success", False))
 
-        elif name == "get_example":
-            query = str(arguments.get("query", ""))
-            language = str(arguments.get("language", ""))
-            r = await githits_get_example(query, language)
+        elif name == "searchcode":
+            action = str(arguments.get("action", ""))
+            repo = str(arguments.get("repository", ""))
+            if not repo:
+                return _res({"error": "repository is required for searchcode"}, False)
+            if action == "analyze":
+                r = await searchcode_analyze(
+                    repo, language=str(arguments.get("language", "")),
+                    path=str(arguments.get("path", "")),
+                    detail_level=str(arguments.get("detail_level", "summary")))
+            elif action == "search":
+                r = await searchcode_search(
+                    repo, query=str(arguments.get("query", "")),
+                    max_results=int(arguments.get("max_results", 10)),
+                    context_lines=int(arguments.get("context_lines", 2)),
+                    case_sensitive=bool(arguments.get("case_sensitive", False)))
+            elif action == "findings":
+                r = await searchcode_findings(
+                    repo, path=str(arguments.get("path", "")),
+                    severity=str(arguments.get("severity", "")),
+                    category=str(arguments.get("category", "")),
+                    max_results=int(arguments.get("max_results", 50)))
+            elif action == "file_tree":
+                r = await searchcode_file_tree(
+                    repo, path_filter=str(arguments.get("path", "")),
+                    query=str(arguments.get("query", "")))
+            elif action == "get_file":
+                r = await searchcode_get_file(
+                    repo, path=str(arguments.get("path", "")),
+                    symbol_name=str(arguments.get("symbol_name", "")),
+                    start_line=int(arguments.get("start_line", 1)),
+                    end_line=int(arguments.get("end_line", 0)))
+            else:
+                return _res({"error": f"unknown searchcode action: {action}"}, False)
             return _res(r, r.get("success", False))
 
         elif name == "code_search":
-            r = await githits_search(
+            r = await pkgseer_search(
                 query=str(arguments.get("query", "")),
                 target=str(arguments.get("target", "")),
                 source=str(arguments.get("source", "")),
@@ -1315,21 +1364,34 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             return _res(r, r.get("success", False))
 
         elif name == "code_files":
-            r = await githits_code_files(
-                spec=str(arguments.get("spec", "")),
+            spec = str(arguments.get("spec", ""))
+            # Try jsDelivr first for npm (faster, no auth)
+            if spec.startswith("npm:") or ":" not in spec:
+                jr = await jsdelivr_list_files(spec)
+                if jr.get("success"):
+                    return _res(jr)
+            r = await pkgseer_code_files(
+                spec=spec,
                 path_prefix=str(arguments.get("path_prefix", "")),
             )
             return _res(r, r.get("success", False))
 
         elif name == "code_read":
-            r = await githits_code_read(
-                spec=str(arguments.get("spec", "")),
-                path=str(arguments.get("path", "")),
+            spec = str(arguments.get("spec", ""))
+            path = str(arguments.get("path", ""))
+            # Try jsDelivr CDN first for npm (faster, CDN-served)
+            if spec.startswith("npm:") or ":" not in spec or spec == "npm":
+                jr = await jsdelivr_read_file(spec, path)
+                if jr.get("success"):
+                    return _res(jr)
+            r = await pkgseer_code_read(
+                spec=spec,
+                path=path,
             )
             return _res(r, r.get("success", False))
 
         elif name == "code_grep":
-            r = await githits_code_grep(
+            r = await pkgseer_code_grep(
                 spec=str(arguments.get("spec", "")),
                 pattern=str(arguments.get("pattern", "")),
                 path_prefix=str(arguments.get("path_prefix", "")),
@@ -1337,7 +1399,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             return _res(r, r.get("success", False))
 
         elif name == "pkg_deps":
-            r = await githits_pkg_deps(spec=str(arguments.get("spec", "")))
+            r = await pkgseer_pkg_deps(spec=str(arguments.get("spec", "")))
             return _res(r, r.get("success", False))
 
         elif name == "enrich":

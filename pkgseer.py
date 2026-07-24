@@ -1,27 +1,28 @@
-"""Direct HTTP wrappers for GitHits APIs (REST + PkgSeer GraphQL).
+"""Direct HTTP wrappers for PkgSeer GraphQL (pkgseer.dev), jsDelivr API + CDN.
 
-No CLI subprocess, no asyncio.Lock, no race conditions — plain httpx
-calls to api.githits.com (REST search) and pkgseer.dev (GraphQL).
+PkgSeer: per-package code navigation (search, files, grep, deps) across
+npm/PyPI/crates. Requires GITHITS_API_TOKEN.
+jsDelivr: free CDN for npm package file listing + raw content reading.
+No auth needed.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import httpx
 
 from config import GITHITS_API_TOKEN
 
-_API_URL = "https://api.githits.com"
 _PKGSEER_URL = "https://pkgseer.dev"
+_JSDELIVR_API = "https://data.jsdelivr.com/v1"
 _TIMEOUT = 90
 
 _HEADERS = {"Authorization": f"Bearer {GITHITS_API_TOKEN}", "Content-Type": "application/json"}
 
 # ---------------------------------------------------------------------------
-# Helpers
+# PkgSeer: helpers
 # ---------------------------------------------------------------------------
 
 if not GITHITS_API_TOKEN:
@@ -42,13 +43,13 @@ async def _post_json(url: str, body: dict[str, Any], timeout: int = _TIMEOUT) ->
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
             resp = await client.post(url, headers=_HEADERS, json=body)
     except httpx.TimeoutException:
-        return {"success": False, "error": f"GitHits request timed out ({timeout}s)"}
+        return {"success": False, "error": f"PkgSeer request timed out ({timeout}s)"}
     except httpx.RequestError as e:
-        return {"success": False, "error": f"GitHits request failed: {e}"}
+        return {"success": False, "error": f"PkgSeer request failed: {e}"}
     if resp.status_code == 401:
-        return {"success": False, "error": "GitHits API rejected the token (401)"}
+        return {"success": False, "error": "PkgSeer API rejected the token (401)"}
     if resp.status_code >= 400:
-        return {"success": False, "error": f"GitHits API error ({resp.status_code}): {resp.text[:300]}"}
+        return {"success": False, "error": f"PkgSeer API error ({resp.status_code}): {resp.text[:300]}"}
     try:
         return {"success": True, "data": resp.json()}
     except json.JSONDecodeError:
@@ -65,7 +66,6 @@ async def _pkgseer_graphql(
     if not result.get("success"):
         return result
     data = result.get("data", {})
-    # Surface GraphQL-level errors
     if isinstance(data, dict) and data.get("errors"):
         msgs = [e.get("message", str(e)) for e in data["errors"]]
         return {"success": False, "error": "; ".join(msgs)}
@@ -90,40 +90,6 @@ def _parse_spec(spec: str) -> dict[str, str]:
     if version:
         result["version"] = version
     return result
-
-
-def _extract_solution_id(text: str) -> tuple[str, str | None]:
-    """Extract trailing solution_id line from markdown response."""
-    m = re.search(r"\nsolution_id:\s*(\S+)\s*$", text)
-    if m:
-        return text[: m.start()], m.group(1)
-    return text, None
-
-
-# ---------------------------------------------------------------------------
-# REST API — api.githits.com
-# ---------------------------------------------------------------------------
-
-
-async def get_example(query: str, language: str = "") -> dict[str, Any]:
-    """Canonical open-source examples via REST /search."""
-    err = _check_token()
-    if err:
-        return err
-    body = {"query": query, "include_explanation": False}
-    if language:
-        body["language"] = language
-    result = await _post_json(f"{_API_URL}/search", body, timeout=_TIMEOUT)
-    if not result.get("success"):
-        return result
-    text = result.get("text", "")
-    if not text:
-        return {"success": False, "error": "empty response from GitHits search"}
-    content, solution_id = _extract_solution_id(text)
-    payload = {"result": content}
-    if solution_id:
-        payload["solution_id"] = solution_id
-    return {"success": True, **payload}
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +198,72 @@ async def pkg_deps(spec: str) -> dict[str, Any]:
     data = result.get("data", {}).get("data", {}).get("packageDependencies", {}) or {}
     deps = data.get("dependencies", {})
     return {"success": True, "dependencies": deps, "package": data.get("package", {})}
+
+
+# ---------------------------------------------------------------------------
+# jsDelivr — free npm file listing + content via CDN
+# ---------------------------------------------------------------------------
+
+
+async def jsdelivr_list_files(spec: str) -> dict[str, Any]:
+    """List all files in an npm package via jsDelivr Data API (flat structure).
+    spec format: 'npm:express' or 'npm:express@5.2.1'. npm registry only.
+    3-5x faster than PkgSeer for npm, no rate limits.
+    """
+    parts = spec.split(":")
+    pkg_name = parts[-1] if len(parts) > 1 else spec
+    version = ""
+    if "@" in pkg_name and not pkg_name.startswith("@"):
+        pkg_name, version = pkg_name.rsplit("@", 1)
+    url = f"{_JSDELIVR_API}/packages/npm/{pkg_name}"
+    if version:
+        url += f"@{version}"
+    url += "?structure=flat"
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(url)
+    except httpx.RequestError as e:
+        return {"success": False, "error": f"jsDelivr request failed: {e}"}
+    if r.status_code == 403:
+        return {"success": False, "error": "jsDelivr: package too large (>100 MB)"}
+    if r.status_code != 200:
+        return {"success": False, "error": f"jsDelivr HTTP {r.status_code}"}
+    data = r.json()
+    files_list = data.get("files", [])
+    names = [f["name"] for f in files_list if isinstance(f, dict) and not f.get("files")]
+    return {
+        "success": True,
+        "package": pkg_name,
+        "version": data.get("version", version or "latest"),
+        "default": data.get("default", ""),
+        "files": names,
+        "total": len(names),
+    }
+
+
+async def jsdelivr_read_file(spec: str, file_path: str) -> dict[str, Any]:
+    """Read raw file content from an npm package via jsDelivr CDN.
+    spec format: 'npm:express' or 'npm:express@5.2.1'.
+    """
+    parts = spec.split(":")
+    pkg_name = parts[-1] if len(parts) > 1 else spec
+    version = ""
+    if "@" in pkg_name and not pkg_name.startswith("@"):
+        pkg_name, version = pkg_name.rsplit("@", 1)
+    ver_part = f"@{version}" if version else ""
+    file_path_clean = file_path if file_path.startswith("/") else f"/{file_path}"
+    url = f"https://cdn.jsdelivr.net/npm/{pkg_name}{ver_part}{file_path_clean}"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(url)
+    except httpx.RequestError as e:
+        return {"success": False, "error": f"jsDelivr CDN request failed: {e}"}
+    if r.status_code != 200:
+        return {"success": False, "error": f"jsDelivr CDN HTTP {r.status_code}"}
+    return {
+        "success": True,
+        "content": r.text,
+        "file_path": file_path_clean,
+        "content_type": r.headers.get("content-type", ""),
+        "total_chars": len(r.text),
+    }
