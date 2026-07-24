@@ -89,15 +89,15 @@ Code search, package analysis, documentation, vulnerability scanning.
 
 **code_grep**(spec, pattern, path_prefix) — grep indexed package source.
 
-**pkg**(name, registry=auto, action=info|changelog|upgrade_review|files|read) — package metadata.
+**pkg**(name, registry=auto, action=info|...|files|read) — composite: Libraries.io + Sonatype + GitHits.
 
 **pkg_deps**(spec) — transitive deps + conflict detection.
 
 **search_libraries**(name, platform) — Libraries.io metadata.
 
-**vulns**(action=scan|detail|latest_version|search|license, name, version) — Sonatype scanning.
+**vulns**(action=scan|detail|...|quick_report, name, version) — Sonatype scanning.
 
-**search_package**(name, registry=auto) — npm/PyPI/crates metadata/versions.
+**search_package**(name, registry=auto) — raw registry queries (npm/PyPI/crates/deeps.dev). For composite use **pkg**.
 
 **enrich**(query, results, top_k, max_fetch_size) — fetch+NIM dedup+BM25+rerank for external results.
 
@@ -228,7 +228,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_package",
-            description="Package metadata from npm/PyPI/crates. e.g. search_package(name='express', registry='npm')",
+            description="Raw package registry queries (npm/PyPI/crates + deps.dev). Use for fast single-source lookups. For composite intelligence (Libraries.io + Sonatype vulns), use `pkg` instead. e.g. search_package(name='express', registry='npm')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -449,7 +449,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="pkg",
-            description="Package intelligence: info (composite metadata), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). e.g. pkg(name='express', action='info')",
+            description="Package intelligence: info (composite metadata — Libraries.io + Sonatype + GitHits), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). For raw single-source registry queries (npm versions, crates categories), use `search_package` instead. e.g. pkg(name='express', action='info')",
             inputSchema={
                 "type": "object",
                 "properties": {
