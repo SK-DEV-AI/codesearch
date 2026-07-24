@@ -97,7 +97,7 @@ Code search, package analysis, documentation, vulnerability scanning.
 
 **code_grep**(spec, pattern, path_prefix) — grep indexed package source.
 
-**pkg**(name, registry=auto, action=info|...|files|read) — composite: Libraries.io + Sonatype + GitHits.
+**pkg**(name, registry=auto, action=info|...|files|read) — composite: Libraries.io + Sonatype + PkgSeer.
 
 **pkg_deps**(spec) — transitive deps + conflict detection.
 
@@ -155,11 +155,11 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="github",
-            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree. Use start_line/end_line with contents action for targeted source reads. e.g. github(action='search', query='rate limiter', language='rust')",
+            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree, issue/PR detail with comments/reviews, user/org profiles, community health, SBOM. Use start_line/end_line with contents action for targeted source reads. e.g. github(action='issue', owner='sst', repo='opencode', issue_number=42)",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree", "search_labels", "search_topics"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree", "search_labels", "search_topics", "issue", "pr", "pr_reviews", "user"], "default": "search"},
                     "query": {"type": "string"},
                     "search_type": {"type": "string", "enum": ["code","repos","issues","users"], "default": "code"},
                     "owner": {"type": "string"},
@@ -194,6 +194,9 @@ async def handle_list_tools() -> list[Tool]:
                     "tree_sha": {"type": "string", "default": "HEAD", "description": "Tree SHA or HEAD for tree action"},
                     "recursive": {"type": "boolean", "default": True, "description": "Recursive tree for tree action"},
                     "branch": {"type": "string", "description": "Branch name (readme/contents actions)"},
+                    "issue_number": {"type": "integer", "description": "Issue/PR number (issue, pr, pr_reviews actions)"},
+                    "pr_number": {"type": "integer", "description": "PR number (pr, pr_reviews actions)"},
+                    "username": {"type": "string", "description": "GitHub username (user action)"},
                 },
                 "required": ["action"],
             },
@@ -405,7 +408,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_search",
-            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by GitHits. e.g. code_search(query='handleAuth', target='npm:express')",
+            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by PkgSeer. e.g. code_search(query='handleAuth', target='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -444,7 +447,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_grep",
-            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by GitHits. e.g. code_grep(spec='npm:express', pattern='handleAuth')",
+            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by PkgSeer. e.g. code_grep(spec='npm:express', pattern='handleAuth')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -457,7 +460,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="pkg_deps",
-            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by GitHits. e.g. pkg_deps(spec='npm:express')",
+            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by PkgSeer. e.g. pkg_deps(spec='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -468,7 +471,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="pkg",
-            description="Package intelligence: info (composite metadata — Libraries.io + Sonatype + GitHits), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). For raw single-source registry queries (npm versions, crates categories), use `search_package` instead. e.g. pkg(name='express', action='info')",
+            description="Package intelligence: info (composite metadata — Libraries.io + Sonatype + PkgSeer), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). For raw single-source registry queries (npm versions, crates categories), use `search_package` instead. e.g. pkg(name='express', action='info')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -625,6 +628,24 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action == "search_topics":
                 r = await search_topics(query=str(arguments.get("query","")),
                     count=int(arguments.get("count",10)))
+            elif action == "issue":
+                r = await gh_get_issue(
+                    owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    issue_number=int(arguments.get("issue_number", 0)))
+            elif action == "pr":
+                r = await gh_get_pr(
+                    owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    pr_number=int(arguments.get("pr_number", 0)))
+            elif action == "pr_reviews":
+                r = await gh_get_pr_reviews(
+                    owner=str(arguments.get("owner", "")),
+                    repo=str(arguments.get("repo", "")),
+                    pr_number=int(arguments.get("pr_number", 0)))
+            elif action == "user":
+                r = await gh_get_user(
+                    username=str(arguments.get("username", "")))
             else:
                 return _res({"error": f"unknown github action: {action}"}, False)
             return _res(r, r.get("success", False))

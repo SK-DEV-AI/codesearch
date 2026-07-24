@@ -487,3 +487,241 @@ async def search_topics(query: str, count: int = 10) -> dict:
         return {"success": True, "results": results, "total": r.json().get("total_count", 0)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
+
+
+async def gh_get_issue(owner: str, repo: str, issue_number: int) -> dict:
+    """Get a full issue/PR with body, comments, events, and timeline."""
+    cache_key = f"gh_issue:{owner}:{repo}:{issue_number}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        issue_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/issues/{issue_number}",
+            headers=await _gh_headers())
+        if issue_r.status_code != 200:
+            return {"success": False, "error": f"GitHub issue {issue_r.status_code}"}
+        issue = issue_r.json()
+
+        comments_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            params={"per_page": 30, "sort": "created", "direction": "asc"},
+            headers=await _gh_headers())
+        comments = []
+        if comments_r.status_code == 200:
+            for c in (comments_r.json() or []):
+                comments.append({
+                    "user": c.get("user", {}).get("login", ""),
+                    "body": (c.get("body", "") or "")[:2000],
+                    "created_at": c.get("created_at", ""),
+                    "updated_at": c.get("updated_at", ""),
+                })
+
+        timeline_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/issues/{issue_number}/timeline",
+            params={"per_page": 30},
+            headers=await _gh_headers())
+        events = []
+        if timeline_r.status_code == 200:
+            for ev in (timeline_r.json() or []):
+                events.append({
+                    "event": ev.get("event", ""),
+                    "actor": ev.get("actor", {}).get("login", "") if ev.get("actor") else "",
+                    "created_at": ev.get("created_at", ""),
+                    "label": ev.get("label", {}).get("name", "") if ev.get("label") else "",
+                    "commit_id": (ev.get("commit_id", "") or "")[:8],
+                })
+
+        result = {
+            "success": True,
+            "number": issue.get("number"),
+            "title": issue.get("title", ""),
+            "state": issue.get("state", ""),
+            "body": (issue.get("body", "") or "")[:8000],
+            "user": issue.get("user", {}).get("login", ""),
+            "labels": [l.get("name", "") for l in (issue.get("labels", []) or [])],
+            "assignees": [a.get("login", "") for a in (issue.get("assignees", []) or [])],
+            "milestone": issue.get("milestone", {}).get("title", "") if issue.get("milestone") else "",
+            "created_at": issue.get("created_at", ""),
+            "updated_at": issue.get("updated_at", ""),
+            "closed_at": issue.get("closed_at"),
+            "comments": issue.get("comments", 0),
+            "pull_request": issue.get("pull_request", {}).get("url", "") if issue.get("pull_request") else "",
+            "comment_data": comments,
+            "timeline_events": events,
+        }
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_pr(owner: str, repo: str, pr_number: int) -> dict:
+    """Get a full PR with body, commits, files changed, and merge status."""
+    cache_key = f"gh_pr:{owner}:{repo}:{pr_number}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        pr_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}",
+            headers=await _gh_headers())
+        if pr_r.status_code != 200:
+            return {"success": False, "error": f"GitHub PR {pr_r.status_code}"}
+        pr = pr_r.json()
+
+        commits_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}/commits",
+            params={"per_page": 30},
+            headers=await _gh_headers())
+        commits = []
+        if commits_r.status_code == 200:
+            for c in (commits_r.json() or []):
+                commit = c.get("commit", {})
+                commits.append({
+                    "sha": c.get("sha", "")[:8],
+                    "message": (commit.get("message", "") or "")[:200],
+                    "author": commit.get("author", {}).get("name", "") if commit.get("author") else "",
+                    "date": commit.get("committer", {}).get("date", "") if commit.get("committer") else "",
+                })
+
+        files_r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}/files",
+            params={"per_page": 30},
+            headers=await _gh_headers())
+        files = []
+        if files_r.status_code == 200:
+            for f in (files_r.json() or []):
+                files.append({
+                    "filename": f.get("filename", ""),
+                    "status": f.get("status", ""),
+                    "additions": f.get("additions", 0),
+                    "deletions": f.get("deletions", 0),
+                    "changes": f.get("changes", 0),
+                })
+
+        result = {
+            "success": True,
+            "number": pr.get("number"),
+            "title": pr.get("title", ""),
+            "state": pr.get("state", ""),
+            "body": (pr.get("body", "") or "")[:8000],
+            "user": pr.get("user", {}).get("login", ""),
+            "base_branch": pr.get("base", {}).get("ref", "") if pr.get("base") else "",
+            "head_branch": pr.get("head", {}).get("ref", "") if pr.get("head") else "",
+            "head_repo": pr.get("head", {}).get("repo", {}).get("full_name", "") if pr.get("head") and pr.get("head", {}).get("repo") else "",
+            "mergeable": pr.get("mergeable"),
+            "mergeable_state": pr.get("mergeable_state", ""),
+            "merged": pr.get("merged", False),
+            "merged_by": pr.get("merged_by", {}).get("login", "") if pr.get("merged_by") else "",
+            "draft": pr.get("draft", False),
+            "created_at": pr.get("created_at", ""),
+            "updated_at": pr.get("updated_at", ""),
+            "closed_at": pr.get("closed_at"),
+            "merged_at": pr.get("merged_at"),
+            "additions": pr.get("additions", 0),
+            "deletions": pr.get("deletions", 0),
+            "changed_files": pr.get("changed_files", 0),
+            "commits": pr.get("commits", 0),
+            "comments": pr.get("comments", 0),
+            "review_comments": pr.get("review_comments", 0),
+            "commit_data": commits,
+            "file_data": files,
+        }
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_pr_reviews(owner: str, repo: str, pr_number: int) -> dict:
+    """Get PR reviews with comments and state (approved, changes_requested, etc.)."""
+    cache_key = f"gh_pr_reviews:{owner}:{repo}:{pr_number}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _http_request("GET",
+            f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+            headers=await _gh_headers())
+        if r.status_code != 200:
+            return {"success": False, "error": f"GitHub PR reviews {r.status_code}"}
+        reviews = []
+        for rev in (r.json() or []):
+            reviews.append({
+                "user": rev.get("user", {}).get("login", ""),
+                "state": rev.get("state", ""),
+                "body": (rev.get("body", "") or "")[:1000],
+                "submitted_at": rev.get("submitted_at", ""),
+                "commit_id": (rev.get("commit_id", "") or "")[:8],
+            })
+        result = {"success": True, "reviews": reviews, "total": len(reviews)}
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def gh_get_user(username: str) -> dict:
+    """Get a GitHub user profile with bio, stats, orgs, and recent repos."""
+    cache_key = f"gh_user:{username}"
+    cached = await _cached(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        user_r = await _http_request("GET", f"{GH_API}/users/{username}",
+            headers=await _gh_headers())
+        if user_r.status_code != 200:
+            return {"success": False, "error": f"GitHub user {user_r.status_code}"}
+        u = user_r.json()
+
+        repos_r = await _http_request("GET", f"{GH_API}/users/{username}/repos",
+            params={"sort": "updated", "per_page": 10, "type": "public"},
+            headers=await _gh_headers())
+        repos = []
+        if repos_r.status_code == 200:
+            for repo in (repos_r.json() or []):
+                repos.append({
+                    "name": repo.get("full_name", ""),
+                    "description": (repo.get("description", "") or "")[:100],
+                    "stars": repo.get("stargazers_count", 0),
+                    "language": repo.get("language") or "",
+                    "updated_at": repo.get("updated_at", ""),
+                })
+
+        orgs_r = await _http_request("GET", f"{GH_API}/users/{username}/orgs",
+            headers=await _gh_headers())
+        orgs = []
+        if orgs_r.status_code == 200:
+            orgs = [o.get("login", "") for o in (orgs_r.json() or [])]
+
+        result = {
+            "success": True,
+            "login": u.get("login", ""),
+            "name": u.get("name", "") or "",
+            "avatar_url": u.get("avatar_url", ""),
+            "bio": (u.get("bio", "") or "")[:500],
+            "company": u.get("company", "") or "",
+            "location": u.get("location", "") or "",
+            "blog": u.get("blog", "") or "",
+            "email": u.get("email", "") or "",
+            "twitter": u.get("twitter_username", "") or "",
+            "public_repos": u.get("public_repos", 0),
+            "public_gists": u.get("public_gists", 0),
+            "followers": u.get("followers", 0),
+            "following": u.get("following", 0),
+            "created_at": u.get("created_at", ""),
+            "updated_at": u.get("updated_at", ""),
+            "hireable": u.get("hireable", False),
+            "type": u.get("type", "User"),
+            "site_admin": u.get("site_admin", False),
+            "repos": repos,
+            "orgs": orgs,
+        }
+        await _set_cache(cache_key, result)
+        return result
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"success": False, "error": str(e)}
+
+
+
