@@ -147,7 +147,7 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="github",
-            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree. Use start_line/end_line with contents action for targeted source reads.",
+            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree. Use start_line/end_line with contents action for targeted source reads. e.g. github(action='search', query='rate limiter', language='rust')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -192,7 +192,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="wiki",
-            description="Repo architecture and wiki via DeepWiki + CodeWiki. For single-repo queries use owner+repo; for multi-repo questions pass repos (array of owner/repo strings, max 10).",
+            description="Repo architecture and wiki via DeepWiki + CodeWiki. For single-repo queries use owner+repo; for multi-repo questions pass repos (array of owner/repo strings, max 10). e.g. wiki(owner='torvalds', repo='linux', question='How does the scheduler work?')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -211,7 +211,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_all",
-            description="Unified search across 14+ sources with embedding dedup and reranking.",
+            description="Unified search across 14+ sources with embedding dedup and reranking. e.g. search_all(query='rust async runtime', language='rust')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -228,7 +228,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_package",
-            description="Package metadata from npm/PyPI/crates.",
+            description="Package metadata from npm/PyPI/crates. e.g. search_package(name='express', registry='npm')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -245,7 +245,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="so_search",
-            description="Stack Overflow: Stack Exchange API (free) or SOFA (requires SOFA_KEY).",
+            description="Stack Overflow: Stack Exchange API (free) or SOFA (requires SOFA_KEY). e.g. so_search(query='python async', tags='python', accepted=true)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -273,7 +273,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="hn",
-            description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show).",
+            description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show). e.g. hn(query='rust', tags='story', min_points=50)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -293,7 +293,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_libraries",
-            description="Libraries.io dependency metadata and source rank.",
+            description="Libraries.io dependency metadata and source rank. e.g. search_libraries(name='lodash', platform='npm')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -314,7 +314,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="vulns",
-            description="Sonatype Guide: scan packages, vulnerability details, latest version, search, license analysis, or quick report by PURL.",
+            description="Sonatype Guide: scan packages, vulnerability details, latest version, search, license analysis, or quick report by PURL. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -333,7 +333,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="docs",
-            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content.",
+            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content. e.g. docs(query='authentication', library='express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -353,7 +353,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="papers",
-            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search.",
+            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -374,7 +374,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_example",
-            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-90s latency. Powered by GitHits.",
+            description="Find canonical open-source code examples with real implementation patterns. Describe what you need in natural language — returns working code with source citations from real repos, issues, PRs, and discussions. ~15-90s latency. Powered by GitHits. e.g. get_example(query='read a file line by line in python', language='python')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -386,7 +386,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_search",
-            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by GitHits.",
+            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by GitHits. e.g. code_search(query='handleAuth', target='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -401,7 +401,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_files",
-            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. Powered by GitHits.",
+            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. Powered by GitHits. e.g. code_files(spec='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -413,7 +413,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_read",
-            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. Powered by GitHits.",
+            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. Powered by GitHits. e.g. code_read(spec='npm:express', path='src/index.js')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -425,7 +425,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="code_grep",
-            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by GitHits.",
+            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by GitHits. e.g. code_grep(spec='npm:express', pattern='handleAuth')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -438,7 +438,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="pkg_deps",
-            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by GitHits.",
+            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by GitHits. e.g. pkg_deps(spec='npm:express')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -449,7 +449,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="pkg",
-            description="Package intelligence: info (composite metadata), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file).",
+            description="Package intelligence: info (composite metadata), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). e.g. pkg(name='express', action='info')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -469,7 +469,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="enrich",
-            description="Fetch full content for a list of search results, deduplicate by embedding, and rerank by relevance. Give it results from any search tool plus the original query.",
+            description="Fetch full content for a list of search results, deduplicate by embedding, and rerank by relevance. Give it results from any search tool plus the original query. e.g. enrich(query='rust async', results=[{'url':'...','title':'...'}])",
             inputSchema={
                 "type": "object",
                 "properties": {
