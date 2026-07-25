@@ -1231,7 +1231,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             if merged.get("deduped_results"):
                 try:
                     top = merged["deduped_results"][:3]
-                    ctx = "\n\n".join(f"[{i+1}] {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
+                    ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
                                      for i, x in enumerate(top))
                     _groq_keys = _KeyRotator("GROQ_API_KEYS")
                     if _groq_keys.has_keys:
