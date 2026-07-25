@@ -69,7 +69,7 @@ from tavily_search import tavily_search
 from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
-from openalex import search_openalex
+from openalex import search_openalex, search_openalex_authors, search_openalex_concepts, search_openalex_institutions
 
 server = Server("codesearch", instructions="""# CodeSearch MCP
 
@@ -84,6 +84,8 @@ Code search, package analysis, documentation, vulnerability scanning.
 **wiki**(owner, repo, repos=[], question=ask) — DeepWiki + CodeWiki architecture Q&A.
 
 **search_all**(query, language, owner, repo, count) — 17 sources: SO+SOFA+HN+GitHub+DeepWiki+CodeWiki+DevDocs+S2+CORE+arXiv+OpenAlex+libraries.io+npm+crates+Tavily+Context7 → dedup → hybrid rank → rerank.
+
+**openalex**(query, action=works|authors|topics|institutions, count) — OpenAlex academic database. Free, no API key.
 
 **papers**(query, fields_of_study, year, count) — S2 + CORE + arXiv with FoS filter.
 
@@ -237,6 +239,19 @@ async def handle_list_tools() -> list[Tool]:
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
                     "count": {"type": "integer", "default": 10, "description": "Results per source (max 50)"},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="openalex",
+            description="Search OpenAlex academic research database — papers, authors, institutions, and research topics. Free, no API key needed. e.g. openalex(query='transformer attention', action='works')",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "action": {"type": "string", "description": "Search entity type", "enum": ["works", "authors", "topics", "institutions"]},
+                    "count": {"type": "integer", "default": 10},
                 },
                 "required": ["query"],
             },
@@ -1038,6 +1053,20 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await readthedocs_builds(str(arguments.get("project", "")))
             else:
                 return _res({"error": f"unknown docs action: {action}"}, False)
+            return _res(r, r.get("success", False))
+
+        elif name == "openalex":
+            query = str(arguments.get("query", ""))
+            action = str(arguments.get("action", "works"))
+            cnt = int(arguments.get("count", 10))
+            if action == "authors":
+                r = await search_openalex_authors(query, cnt)
+            elif action == "topics":
+                r = await search_openalex_concepts(query, cnt)
+            elif action == "institutions":
+                r = await search_openalex_institutions(query, cnt)
+            else:
+                r = await search_openalex(query, cnt)
             return _res(r, r.get("success", False))
 
         elif name == "search_all":
