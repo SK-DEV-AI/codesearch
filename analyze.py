@@ -84,7 +84,7 @@ async def analyze_repo(repository: str) -> dict:
             "forks": d.get("forks_count", 0),
             "language": d.get("language", "") or "",
             "default_branch": d.get("default_branch", ""),
-            "license": d.get("license", {}).get("spdx_id", "") if d.get("license") else "",
+            "license": d.get("license", ""),
             "homepage": d.get("homepage", "") or "",
             "topics": d.get("topics", []),
             "open_issues": d.get("open_issues_count", 0),
