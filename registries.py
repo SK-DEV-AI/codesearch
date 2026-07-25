@@ -242,6 +242,37 @@ async def get_crates_versions(name: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def get_pypi_versions(name: str) -> dict:
+    """List all available versions of a PyPI package."""
+    try:
+        c = get_http_client()
+        r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/json",
+                        headers={"User-Agent": "mcp-codesearch/1.0"})
+        if r.status_code != 200:
+            return {"success": False, "error": f"PyPI: {r.status_code}"}
+        data = r.json()
+        releases = data.get("releases", {}) or {}
+        versions = []
+        for ver, files in releases.items():
+            upload_times = [f.get("upload_time_iso_8601", "") for f in (files or []) if f.get("upload_time_iso_8601")]
+            has_sdist = any(f.get("packagetype") == "sdist" for f in (files or []))
+            has_wheel = any(f.get("packagetype") == "bdist_wheel" for f in (files or []))
+            versions.append({
+                "version": ver,
+                "upload_time": max(upload_times) if upload_times else "",
+                "has_wheel": has_wheel,
+                "has_sdist": has_sdist,
+                "file_count": len(files or []),
+            })
+        info = data.get("info", {})
+        return {"success": True, "name": info.get("name", name),
+                "summary": (info.get("summary") or "")[:300],
+                "total_versions": len(versions),
+                "versions": sorted(versions, key=lambda v: v["version"], reverse=True)}
+    except (httpx.HTTPError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
 async def get_pypi_version(name: str, version: str) -> dict:
     try:
         c = get_http_client()
@@ -251,12 +282,26 @@ async def get_pypi_version(name: str, version: str) -> dict:
             return {"success": False, "error": f"PyPI version: {r.status_code}"}
         data = r.json()
         info = data.get("info", {})
+        urls = data.get("urls", [])
+        files = []
+        for url_info in (urls or []):
+            files.append({
+                "filename": url_info.get("filename", ""),
+                "url": url_info.get("url", ""),
+                "size": url_info.get("size", 0),
+                "python_version": url_info.get("python_version", ""),
+                "packagetype": url_info.get("packagetype", ""),
+                "requires_python": url_info.get("requires_python", ""),
+                "sha256": (url_info.get("digests", {}) or {}).get("sha256", ""),
+                "upload_time": url_info.get("upload_time_iso_8601", ""),
+            })
         return {"success": True, "name": info.get("name", name), "version": info.get("version", version),
                 "summary": info.get("summary", ""),
                 "license": info.get("license", ""),
                 "requires_python": info.get("requires_python", ""),
                 "yanked": info.get("yanked", False),
-                "yanked_reason": info.get("yanked_reason", "")}
+                "yanked_reason": info.get("yanked_reason", ""),
+                "files": files}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
 

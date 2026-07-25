@@ -52,7 +52,8 @@ from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_compo
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
     readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
-    get_npm_time, get_npm_version, get_crates_versions, get_pypi_version,
+    get_npm_time, get_npm_version, get_crates_versions,
+    get_pypi_version, get_pypi_versions,
     npm_get_version, crates_get_version, crates_get_readme, crates_get_summary)
 from devdocs import (devdocs_list_docs, devdocs_fetch, devdocs_fetch_content,
     devdocs_search, devdocs_meta, devdocs_toc)
@@ -248,7 +249,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
+                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|pypi_versions|pypi_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
                     "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
@@ -723,6 +724,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await npm_get_version(name=pkg_name, version=str(arguments.get("version","")))
             elif action_type == "crates_get_version":
                 r = await crates_get_version(name=pkg_name, version=str(arguments.get("version","")))
+            elif action_type == "pypi_get_version":
+                r = await get_pypi_version(name=pkg_name, version=str(arguments.get("version","")))
             elif action_type == "crates_get_readme":
                 r = await crates_get_readme(name=pkg_name, version=str(arguments.get("version","")))
             elif action_type == "crates_summary":
