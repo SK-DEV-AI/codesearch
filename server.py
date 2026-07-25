@@ -75,53 +75,19 @@ server = Server("codesearch", instructions="""# CodeSearch MCP
 
 Code search, package analysis, documentation, vulnerability scanning.
 
-## Tools
+## When to use what
 
-**github**(action, owner, repo, ...) — GitHub API: search code/repos/issues, read files, tree, commits.
-
-**docs**(query, library, fast) — Context7→ReadTheDocs→DevDocs fallback.
-
-**wiki**(owner, repo, repos=[], question=ask) — DeepWiki + CodeWiki architecture Q&A.
-
-**search_all**(query, language, owner, repo, count) — 17 sources: SO+SOFA+HN+GitHub+DeepWiki+CodeWiki+DevDocs+S2+CORE+arXiv+OpenAlex+libraries.io+npm+crates+Tavily+Context7 → dedup → hybrid rank → rerank.
-
-**openalex**(query, action=works|authors|topics|institutions, count) — OpenAlex academic database. Free, no API key.
-
-**papers**(query, fields_of_study, year, count) — S2 + CORE + arXiv with FoS filter.
-
-**so_search**(action=stackexchange|sofa, tags, accepted, count) — Stack Exchange (accepted/resolved) or SOFA (community posts).
-
-**hn**(action=search, tags=story|show|ask, min_points, count) — structured HN threads.
-
-**searchcode**(action=analyze|search|findings|file_tree|get_file, repository, ...) — per-repo code intelligence via SearchCode. No auth, no rate limits. Unique: analyze (instant repo overview) and findings (code quality issues).
-
-**code_search**(query, target=ns:lib, lang) — PkgSeer cross-ecosystem symbol/function search.
-
-**code_files**(spec, path_prefix) → **code_read**(spec, path) — browse package source. jsDelivr-backed for npm (no auth, faster).
-
-**code_grep**(spec, pattern, path_prefix) — grep indexed package source.
-
-**pkg**(name, registry=auto, action=info|...|files|read) — composite: Libraries.io + Sonatype + PkgSeer.
-
-**pkg_deps**(spec) — transitive deps + conflict detection.
-
-**search_libraries**(name, platform) — Libraries.io metadata.
-
-**vulns**(action=scan|detail|...|quick_report, name, version) — Sonatype scanning.
-
-**search_package**(name, registry=auto) — raw registry queries (npm/PyPI/crates/deeps.dev). For composite use **pkg**.
-
-**analyze**(repository) — deep repo analysis: parallel GitHub metadata + SearchCode + DeepWiki + CodeWiki in one call.
-
-**enrich**(query, results, top_k, max_fetch_size) — fetch+NIM dedup+BM25+rerank for external results.
+- **search_all** for broad discovery (multi-source). **analyze** for deep repo understanding.
+- **github** for repo metadata, issues, PRs, file tree, commits, users.
+- **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing.
+- **docs** for API/library docs (Context7→DevDocs→ReadTheDocs). **wiki** for repo architecture Q&A.
+- **papers** for academic research (Semantic Scholar+CORE+arXiv). **so_search** for community Q&A, **hn** for tech discussion.
+- **pkg** for composite package info (Libraries.io+Sonatype+vulns). **search_package** for fast single-registry lookups.
+- **vulns** for vulnerability scanning. **enrich** to fetch+rerank results you already have.
 
 ## Pipeline (search_all)
 
-1. Groq code expansion: pseudo-code + API call + library term variants.
-2. 17 parallel sources.
-3. NIM nv-embedcode-7b-v1 dedup (source-clustered cosine).
-4. BM25 hybrid rank (keyword/syntax + embedding).
-5. gte-reranker (704 tokens).
+search_all → multi-source → dedup → hybrid rank → reranker → synthesis (Groq for top 3).
 
 ## Params
 
@@ -131,7 +97,7 @@ Code search, package analysis, documentation, vulnerability scanning.
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `count`: results (default 10, max 50 search_all)
+- `synthesize=true`: get a Groq-summarized answer (default off for search_all/searchcode/github/code tools)
 """)
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -510,7 +476,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="enrich",
-            description="Fetch full content for a list of search results, deduplicate by embedding, and rerank by relevance. Give it results from any search tool plus the original query. e.g. enrich(query='rust async', results=[{'url':'...','title':'...'}])",
+            description="Fetch full content for a list of search results, deduplicate, and rerank by relevance. Give it results from any search tool plus the original query. e.g. enrich(query='rust async', results=[{'url':'...','title':'...'}])",
             inputSchema={
                 "type": "object",
                 "properties": {
