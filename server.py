@@ -126,6 +126,14 @@ def safe_float(v, default=0.0):
 async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
+            name="ping",
+            description="Lightweight connectivity check — verifies internet and key API endpoints are reachable. Use before expensive calls when connectivity is uncertain. No params needed. e.g. ping()",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
             name="github",
             description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree, issue/PR detail with comments/reviews, user/org profiles, community health, SBOM. Use start_line/end_line with contents action for targeted source reads. e.g. github(action='issue', owner='sst', repo='opencode', issue_number=42)",
             inputSchema={
@@ -486,11 +494,11 @@ async def handle_list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "url": {"type": "string"},
-                                "title": {"type": "string"},
-                                "text": {"type": "string"},
-                                "snippet": {"type": "string"},
-                                "source": {"type": "string"},
+                                "url": {"type": "string", "description": "Page URL to fetch content from"},
+                                "title": {"type": "string", "description": "Page title"},
+                                "text": {"type": "string", "description": "Page text or snippet"},
+                                "snippet": {"type": "string", "description": "Search snippet if full text not available"},
+                                "source": {"type": "string", "description": "Engine or source name (e.g. github, hn)"},
                             },
                         },
                         "description": "List of result objects to enrich (url, title, text/snippet, source)",
@@ -531,6 +539,18 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         )
 
     try:
+        if name == "ping":
+            from config import get_http_client
+            c = get_http_client()
+            results = {}
+            for target, url in [("cloudflare", "https://1.1.1.1"), ("google", "https://www.google.com"), ("github", "https://api.github.com")]:
+                try:
+                    r = await c.get(url, timeout=5)
+                    results[target] = {"reachable": True, "status": r.status_code, "ms": int(r.elapsed * 1000) if hasattr(r, 'elapsed') else None}
+                except Exception as e:
+                    results[target] = {"reachable": False, "error": str(e)[:60]}
+            return _res({"success": True, "connectivity": results})
+
         if name == "github":
             action = str(arguments.get("action", "search"))
             if action == "search":
