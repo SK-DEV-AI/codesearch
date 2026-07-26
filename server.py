@@ -1173,7 +1173,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 elif name_ == "so":
                     merged["stackoverflow"] = result["results"]
                     for sr in (result.get("results", []) or []):
-                        flat_items.append({"source": "stackoverflow", "title": sr.get("title", ""), "text": f"{sr.get('body','')} {sr.get('top_answer','')}", "url": sr.get("url", "")})
+                        flat_items.append({"source": "stackoverflow", "title": sr.get("title", ""), "text": f"{sr.get('body','')} {sr.get('top_answer','')}", "url": sr.get("url", ""), "accepted": sr.get("accepted", False), "score": sr.get("score", 0), "answer_count": sr.get("answer_count", 0)})
                 elif name_ in ("sofa_question", "sofa_til", "sofa_blueprint"):
                     content_type_map = {"sofa_question": "question", "sofa_til": "til", "sofa_blueprint": "blueprint"}
                     ct = content_type_map.get(name_, "question")
@@ -1188,7 +1188,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 elif name_ == "hn":
                     merged["hackernews"] = result["results"]
                     for hr in (result.get("results", []) or []):
-                        flat_items.append({"source": "hackernews", "title": hr.get("title", ""), "text": hr.get("title", ""), "url": hr.get("url", "")})
+                        flat_items.append({"source": "hackernews", "title": hr.get("title", ""), "text": hr.get("title", ""), "url": hr.get("url", ""), "points": hr.get("points", 0), "num_comments": hr.get("num_comments", 0)})
                 elif name_ == "libraries_io":
                     merged["libraries_io"] = result["results"]
                     for lr in (result.get("results", []) or []):
@@ -1206,15 +1206,15 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 elif name_ == "s2_papers":
                     merged["semantic_scholar"] = result.get("results", [])
                     for pr in (result.get("results", []) or []):
-                        flat_items.append({"source": "semantic_scholar", "title": pr.get("title", ""), "text": pr.get("abstract", ""), "url": pr.get("url", "")})
+                        flat_items.append({"source": "semantic_scholar", "title": pr.get("title", ""), "text": pr.get("abstract", ""), "url": pr.get("url", ""), "citation_count": pr.get("citationCount", 0), "year": pr.get("year"), "venue": pr.get("venue", "")})
                 elif name_ == "core_papers":
                     merged["core_papers"] = result.get("results", [])
                     for cr in (result.get("results", []) or []):
-                        flat_items.append({"source": "core", "title": cr.get("title", ""), "text": cr.get("abstract", ""), "url": cr.get("downloadUrl", "") or ""})
+                        flat_items.append({"source": "core", "title": cr.get("title", ""), "text": cr.get("abstract", ""), "url": cr.get("downloadUrl", "") or "", "year": cr.get("datePublished", "")[:4] if cr.get("datePublished") else None, "authors": ", ".join(cr.get("authors", []))[:200]})
                 elif name_ == "openalex":
                     merged["openalex"] = result.get("results", [])
                     for pr in (result.get("results", []) or []):
-                        flat_items.append({"source": "openalex", "title": pr.get("title", ""), "text": pr.get("snippet", ""), "url": pr.get("url", "")})
+                        flat_items.append({"source": "openalex", "title": pr.get("title", ""), "text": pr.get("snippet", ""), "url": pr.get("url", ""), "citations": pr.get("citations", 0), "year": pr.get("year"), "doi": pr.get("doi", "")})
                 elif name_ == "tavily":
                     merged["tavily"] = result.get("results", [])
                     for tr in (result.get("results", []) or []):
