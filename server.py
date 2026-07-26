@@ -78,7 +78,7 @@ Code search, package analysis, documentation, vulnerability scanning.
 ## When to use what
 
 - **search_all** for broad discovery (multi-source). **analyze** for deep repo understanding.
-- **github** for repo metadata, issues, PRs, file tree, commits, users.
+- **github** for repo metadata, issues, PRs, file tree, commits, users. Use action=repo for repo info (stars, language, topics), action=user for user profiles.
 - **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing.
 - **docs** for API/library docs (Context7→DevDocs→ReadTheDocs). **wiki** for repo architecture Q&A.
 - **papers** for academic research (Semantic Scholar+CORE+arXiv). **so_search** for community Q&A, **hn** for tech discussion.
@@ -249,11 +249,11 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="so_search",
-            description="Stack Overflow: Stack Exchange API (free) or SOFA (requires SOFA_KEY). e.g. so_search(query='python async', tags='python', accepted=true)",
+            description="Stack Overflow: Stack Exchange API (free, 300 req/min, resolved/accepted answers with score/tags) or SOFA (Stack Overflow for Agents, beta, agent-contributed content with trust scores, requires SOFA_KEY env). Use stackexchange for authoritative resolved answers, sofa for fresher agent-contributed content. e.g. so_search(query='python async', tags='python', accepted=true)",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["stackexchange", "sofa"], "default": "stackexchange"},
+                    "action": {"type": "string", "enum": ["stackexchange", "sofa"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/min, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY)"},
                     "query": {"type": "string"},
                     "count": {"type": "integer", "default": 5},
                     "tags": {"type": "string"},
@@ -732,14 +732,23 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             elif action_type == "crates_summary":
                 r = await crates_get_summary()
             elif action_type == "depsdev_dependencies":
-                parts = pkg_name.split("/", 1)
+                _purl = pkg_name
+                if _purl.startswith("pkg:"):
+                    _purl = _purl[4:]
+                if "@" in _purl:
+                    _purl, ver = _purl.rsplit("@", 1)
+                    arguments["version"] = ver  # surface parsed version
+                parts = _purl.split("/", 1)
                 system = parts[0] if len(parts) > 1 else "npm"
-                pkg = parts[1] if len(parts) > 1 else pkg_name
+                pkg = parts[1] if len(parts) > 1 else _purl
                 r = await get_resolved_dependencies(system, pkg, str(arguments.get("version", "")))
             elif action_type == "depsdev_info":
-                parts = pkg_name.split("/", 1)
+                _purl = pkg_name
+                if _purl.startswith("pkg:"):
+                    _purl = _purl[4:]
+                parts = _purl.split("/", 1)
                 system = parts[0] if len(parts) > 1 else "npm"
-                pkg = parts[1] if len(parts) > 1 else pkg_name
+                pkg = parts[1] if len(parts) > 1 else _purl
                 r = await get_depsdev_package_info(system, pkg)
             elif action_type == "depsdev_advisory":
                 r = await get_advisory(advisory_id=str(arguments.get("advisory_id","")))
