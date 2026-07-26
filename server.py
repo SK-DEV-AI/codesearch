@@ -1129,7 +1129,20 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 return res
 
             results = await _gather_with_deadline(tasks, task_names, 30)
-            merged: dict[str, Any] = {}
+
+            source_availability: dict[str, str] = {}
+            for name_, result in results.items():
+                if isinstance(result, BaseException):
+                    if isinstance(result, asyncio.TimeoutError):
+                        source_availability[name_] = "timed_out"
+                    else:
+                        source_availability[name_] = f"error: {type(result).__name__}"
+                elif isinstance(result, dict) and result.get("success"):
+                    source_availability[name_] = "success"
+                else:
+                    source_availability[name_] = "failed"
+
+            merged: dict[str, Any] = {"source_availability": source_availability}
             flat_items: list[dict] = []
             for name_, result in results.items():
                 if isinstance(result, BaseException):
