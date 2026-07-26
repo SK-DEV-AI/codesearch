@@ -504,7 +504,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="analyze",
-            description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Accepts GitHub URLs or owner/repo strings. e.g. analyze(repository='sst/opencode')",
+            description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Accepts GitHub URLs or owner/repo strings. May take 10-15s (parallel API calls). e.g. analyze(repository='sst/opencode')",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1368,6 +1368,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         elif name == "searchcode":
             action = str(arguments.get("action", ""))
             repo = str(arguments.get("repository", ""))
+            # Accept owner/repo shorthand and package specs
+            if repo and not repo.startswith("http"):
+                if repo.startswith(("npm:", "pypi:", "crates:")):
+                    repo = f"https://github.com/{repo}"  # searchcode will handle gracefully
+                elif "/" in repo and not repo.startswith(("gh:", "github:")):
+                    repo = f"https://github.com/{repo}"
             if not repo:
                 return _res({"error": "repository is required for searchcode"}, False)
             if action == "analyze":

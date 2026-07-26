@@ -17,7 +17,7 @@ async def enrich_results(
 ) -> dict:
     """Fetch full content for search results, deduplicate by embedding, rerank by relevance."""
     if not results:
-        return {"success": False, "error": "no results to enrich", "enriched": []}
+        return {"success": True, "results": [], "reason": "no results to enrich"}
 
     fetcher = get_http_client()
     sem = asyncio.Semaphore(8)
