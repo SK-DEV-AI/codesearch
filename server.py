@@ -1206,7 +1206,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 elif name_ == "s2_papers":
                     merged["semantic_scholar"] = result.get("results", [])
                     for pr in (result.get("results", []) or []):
-                        flat_items.append({"source": "semantic_scholar", "title": pr.get("title", ""), "text": pr.get("abstract", ""), "url": pr.get("url", ""), "citation_count": pr.get("citationCount", 0), "year": pr.get("year"), "venue": pr.get("venue", "")})
+                        flat_items.append({"source": "semantic_scholar", "title": pr.get("title", ""), "text": pr.get("abstract", ""), "url": pr.get("url", ""), "citation_count": pr.get("citationCount", 0), "year": pr.get("year"), "venue": pr.get("venue", ""), "tldr": pr.get("tldr", "")})
                 elif name_ == "core_papers":
                     merged["core_papers"] = result.get("results", [])
                     for cr in (result.get("results", []) or []):
