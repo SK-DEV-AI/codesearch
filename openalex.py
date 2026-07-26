@@ -163,3 +163,34 @@ async def search_openalex_institutions(query: str, count: int = 10) -> dict:
         "results": results,
         "total": data.get("meta", {}).get("count", 0),
     }
+
+
+async def search_openalex_sources(query: str, count: int = 10) -> dict:
+    """Search OpenAlex for sources (journals, conferences, repositories)."""
+    r = await _openalex_get("sources", {
+        "search": query,
+        "per_page": min(count, 50),
+        "sort": "relevance_score:desc",
+    })
+    if not r.get("success"):
+        return {"success": False, "error": r.get("error"), "results": []}
+    data = r["data"]
+    results = []
+    for src in (data.get("results", []) or [])[:count]:
+        results.append({
+            "id": src.get("id", ""),
+            "display_name": src.get("display_name", ""),
+            "type": src.get("type", ""),
+            "host_organization": src.get("host_organization_name", "") or "",
+            "works_count": src.get("works_count", 0),
+            "cited_by_count": src.get("cited_by_count", 0),
+            "is_in_doaj": src.get("is_in_doaj", False),
+            "is_oa": src.get("is_oa", False),
+            "homepage_url": src.get("homepage_url", ""),
+            "works_api_url": src.get("works_api_url", ""),
+        })
+    return {
+        "success": True,
+        "results": results,
+        "total": data.get("meta", {}).get("count", 0),
+    }

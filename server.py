@@ -69,7 +69,7 @@ from tavily_search import tavily_search
 from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
-from openalex import search_openalex, search_openalex_authors, search_openalex_concepts, search_openalex_institutions
+from openalex import search_openalex, search_openalex_authors, search_openalex_concepts, search_openalex_institutions, search_openalex_sources
 
 server = Server("codesearch", instructions="""# CodeSearch MCP
 
@@ -216,7 +216,7 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "action": {"type": "string", "description": "Search entity type", "enum": ["works", "authors", "topics", "institutions"]},
+                    "action": {"type": "string", "description": "Search entity type", "enum": ["works", "authors", "topics", "institutions", "sources"]},
                     "count": {"type": "integer", "default": 10},
                 },
                 "required": ["query"],
@@ -1031,6 +1031,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = await search_openalex_concepts(query, cnt)
             elif action == "institutions":
                 r = await search_openalex_institutions(query, cnt)
+            elif action == "sources":
+                r = await search_openalex_sources(query, cnt)
             else:
                 r = await search_openalex(query, cnt)
             return _res(r, r.get("success", False))
