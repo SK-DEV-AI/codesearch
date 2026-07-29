@@ -118,18 +118,25 @@ async def context7_resolve(query: str, version: str = "", fast: bool = False, li
     if version:
         lib_id = f"{lib_id}@{version}"
     docs = await context7_fetch_docs(lib_id, query, fast=fast)
+    candidates = [{
+        "id": l["id"], "name": l["name"], "description": l.get("description", "")[:200],
+        "trust_score": l.get("trust_score", 0),
+        "benchmark_score": l.get("benchmark_score"),
+        "total_snippets": l.get("total_snippets"),
+        "versions": l.get("versions", [])[:10],
+    } for l in libs[:5]]
     if not docs.get("success") and len(libs) > 1:
         return {
             "success": False,
             "error": f"docs fetch failed for '{best['name']}', {len(libs)} candidates found",
-            "candidates": [{"id": l["id"], "name": l["name"], "description": l["description"][:100]} for l in libs[:5]],
+            "candidates": candidates,
             "hint": "Retry with library_id parameter to pick the right library",
         }
     return {
         "success": True,
         "library": best,
         "docs": docs,
-        "candidates": [{"id": l["id"], "name": l["name"]} for l in libs[:5]] if len(libs) > 1 else None,
+        "candidates": candidates,
     }
 
 

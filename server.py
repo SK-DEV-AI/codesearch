@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 
 from typing import Any
 
@@ -84,6 +85,7 @@ Code search, package analysis, documentation, vulnerability scanning.
 - **papers** for academic research (Semantic Scholar+CORE+arXiv). **so_search** for community Q&A, **hn** for tech discussion.
 - **pkg** for composite package info (Libraries.io+Sonatype+vulns). **search_package** for fast single-registry lookups.
 - **vulns** for vulnerability scanning. **enrich** to fetch+rerank results you already have.
+- **trending** for hot repos by language/time (wraps GitHub stars sort).
 
 ## Pipeline (search_all)
 
@@ -519,6 +521,19 @@ async def handle_list_tools() -> list[Tool]:
                     "repository": {"type": "string", "description": "GitHub repo: URL (https://github.com/owner/repo) or owner/repo string"},
                 },
                 "required": ["repository"],
+            },
+        ),
+        Tool(
+            name="trending",
+            description="Discover trending/hot repositories. Wraps GitHub search with sort=stars and auto-computed date filters. e.g. trending(since='weekly', language='python')",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "enum": ["github"], "default": "github", "description": "Platform to find trending items (github for now)"},
+                    "language": {"type": "string", "description": "Programming language filter (e.g. python, rust, typescript)"},
+                    "since": {"type": "string", "enum": ["daily", "weekly", "monthly"], "default": "weekly", "description": "Time range for trending"},
+                    "limit": {"type": "integer", "default": 10, "description": "Max results"},
+                },
             },
         ),
     ]
@@ -1500,6 +1515,22 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         elif name == "analyze":
             repo_str = str(arguments.get("repository", ""))
             r = await analyze_repo(repo_str)
+            return _res(r, r.get("success", False))
+
+        elif name == "trending":
+            source = str(arguments.get("source", "github"))
+            language = str(arguments.get("language", ""))
+            since = str(arguments.get("since", "weekly"))
+            limit = int(arguments.get("limit", 10))
+            days = {"daily": 1, "weekly": 7, "monthly": 30}.get(since, 7)
+            since_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            r = await search_github(
+                q="", sort="stars", order="desc",
+                created=f">{since_date}", language=language,
+                count=limit, search_type="repositories")
+            for item in r.get("results", []):
+                if isinstance(item, dict):
+                    item["source"] = source
             return _res(r, r.get("success", False))
 
         else:
