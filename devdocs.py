@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from config import DEVDOCS_API, get_http_client
+from config import DEVDOCS_API, get_http_client, api_error
 
 
 async def devdocs_list_docs() -> dict:
@@ -11,7 +11,7 @@ async def devdocs_list_docs() -> dict:
         r = await c.get(f"{DEVDOCS_API}/docs.json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs: {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs", r)}
         docs = r.json()
         return {"success": True, "total": len(docs), "docs": [d.get("name", d.get("slug", "")) for d in docs]}
     except (httpx.HTTPError, ValueError, KeyError) as e:
@@ -24,7 +24,7 @@ async def devdocs_fetch(slug: str) -> dict:
         r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs:", r)}
         data = r.json()
         entries = []
         for entry in (data.get("entries", data.get("types", [data])) if isinstance(data, dict) else data):
@@ -45,7 +45,7 @@ async def devdocs_fetch_content(slug: str, path: str) -> dict:
         r = await c.get(f"{DEVDOCS_API}/{slug}/db.json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs:", r)}
         db = r.json()
         content = db.get(path, "")
         if not content:
@@ -63,7 +63,7 @@ async def devdocs_search(slug: str, query: str) -> dict:
         r = await c.get(f"{DEVDOCS_API}/{slug}/index.json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs:", r)}
         data = r.json()
         ql = query.lower()
         matched = []
@@ -88,7 +88,7 @@ async def devdocs_toc(doc: str, version: str = "") -> dict:
         url = f"{DEVDOCS_API}/{doc}/{version}.json" if version else f"{DEVDOCS_API}/{doc}.json"
         r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs TOC: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs TOC:", r)}
         return {"success": True, "doc": doc, "version": version, "toc": r.json()}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -100,7 +100,7 @@ async def devdocs_meta(slug: str) -> dict:
         r = await c.get(f"{DEVDOCS_API}/{slug}/meta.json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"DevDocs meta: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("DevDocs meta:", r)}
         return {"success": True, "slug": slug, "meta": r.json()}
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}

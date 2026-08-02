@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from config import _cached, _set_cache, get_http_client
+from config import _cached, _set_cache, get_http_client, api_error
 
 RTD_API = "https://readthedocs.org/api/v3"
 
@@ -26,7 +26,7 @@ async def search_readthedocs(project: str, query: str, version: str = "",
         r = await c.get(f"{RTD_API}/search/", params=params,
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs", r)}
         data = r.json()
         results = []
         for hit in data.get("results", [])[:page_size]:
@@ -53,7 +53,7 @@ async def readthedocs_project_info(project: str) -> dict:
         r = await c.get(f"{RTD_API}/projects/{project}/",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs", r)}
         d = r.json()
         return {
             "success": True,
@@ -79,7 +79,7 @@ async def readthedocs_versions(project: str) -> dict:
         r = await c.get(f"{RTD_API}/projects/{project}/versions/",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs", r)}
         data = r.json()
         results = []
         for v in data.get("results", [])[:20]:
@@ -102,7 +102,7 @@ async def readthedocs_translations(project: str) -> dict:
         r = await c.get(f"{RTD_API}/projects/{project}/translations/",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs translations: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs translations", r)}
         data = r.json()
         results = []
         for t in (data.get("results", []) or [])[:20]:
@@ -123,7 +123,7 @@ async def readthedocs_subprojects(project: str) -> dict:
         r = await c.get(f"{RTD_API}/projects/{project}/subprojects/",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs subprojects: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs subprojects", r)}
         data = r.json()
         results = []
         for sp in (data.get("results", []) or [])[:20]:
@@ -145,7 +145,7 @@ async def readthedocs_builds(project: str, limit: int = 10) -> dict:
                         params={"limit": min(limit, 50)},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"ReadTheDocs builds: {r.status_code}"}
+            return {"success": False, "error": api_error("ReadTheDocs builds", r)}
         data = r.json()
         results = []
         for b in (data.get("results", []) or [])[:limit]:

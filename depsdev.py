@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import get_http_client
+from config import get_http_client, api_error
 
 DEPSDEV_API = "https://api.deps.dev/v3"
 
@@ -16,7 +16,7 @@ async def get_resolved_dependencies(system: str, package: str, version: str) -> 
         c = get_http_client()
         r = await c.get(url, timeout=15)
         if r.status_code != 200:
-            return {"success": False, "error": f"deps.dev: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("deps.dev:", r)}
         data = r.json()
         nodes: list[dict] = []
         for n in (data.get("nodes", []) or []):
@@ -52,7 +52,7 @@ async def get_package_info(system: str, package: str) -> dict:
         c = get_http_client()
         r = await c.get(url, timeout=10)
         if r.status_code != 200:
-            return {"success": False, "error": f"deps.dev: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("deps.dev:", r)}
         data = r.json()
         versions = []
         for v in (data.get("versions", []) or [])[:50]:
@@ -82,7 +82,7 @@ async def get_advisory(advisory_id: str) -> dict:
     try:
         c = get_http_client()
         r = await c.get(f"{DEPSDEV_API.replace('/v3','/v3alpha')}/advisories/{advisory_id}", timeout=10)
-        if r.status_code != 200: return {"success": False, "error": f"advisory: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("advisory", r)}
         d = r.json()
         return {"success": True, "id": d.get("id",""), "summary": d.get("summary",""),
             "aliases": d.get("aliases",[]), "severity": d.get("severity",""),
@@ -96,7 +96,7 @@ async def query_by_hash(hash_type: str, hash_value: str) -> dict:
         c = get_http_client()
         r = await c.get(f"{DEPSDEV_API.replace('/v3','/v3alpha')}/query",
             params={"hash.type": hash_type, "hash.value": hash_value}, timeout=10)
-        if r.status_code != 200: return {"success": False, "error": f"query: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("query", r)}
         d = r.json()
         versions = [{"packageKey": v.get("packageKey",{}), "version": v.get("version","")}
                      for v in (d.get("versions",[]) or [])]

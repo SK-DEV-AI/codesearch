@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client
+from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client, api_error
 
 _session_id: str | None = None
 
@@ -60,7 +60,7 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
             r = await c.get(f"{SOFA_BASE}/posts", params=params,
                             headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
         if r.status_code != 200:
-            return {"success": False, "error": f"SOFA search: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("SOFA search:", r)}
         data = r.json()
         items = data.get("items", [])
         results = []
@@ -97,13 +97,13 @@ async def _sofa_get_post(post_id: str) -> dict:
             "X-Sofa-Client-Name": "mcp-codesearch",
         })
         if sess_r.status_code != 201:
-            return {"success": False, "error": f"SOFA session: HTTP {sess_r.status_code}"}
+            return {"success": False, "error": api_error("SOFA session:", sess_r)}
         session_id = sess_r.json()["session_id"]
         c = get_http_client()
         r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
                         headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
         if r.status_code != 200:
-            return {"success": False, "error": f"SOFA post: HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("SOFA post:", r)}
         item = r.json()
         return {
             "success": True,

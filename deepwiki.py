@@ -5,7 +5,7 @@ import json
 
 import httpx
 
-from config import DEEPWIKI_MCP, get_http_client
+from config import DEEPWIKI_MCP, get_http_client, api_error
 
 MAX_DEEPWIKI_RETRIES = 3
 BASE_DELAY = 1.0
@@ -37,7 +37,7 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                 "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "codesearch", "version": "1.0"}}
             }, headers=headers)
             if init.status_code != 200:
-                last_err = f"init failed {init.status_code}"
+                last_err = api_error("init failed", init)
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue
@@ -50,7 +50,7 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                 "params": {"name": "read_wiki_structure", "arguments": struct_args}
             }, headers=headers)
             if struct.status_code != 200:
-                last_err = f"structure {struct.status_code}"
+                last_err = api_error("structure", struct)
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue
@@ -87,7 +87,7 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
     try:
         r = await c.get(f"https://deepwiki.com/{owner}/{repo}", headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("deepwiki", r)}
         return {"success": True, "source": "deepwiki_html", "content": r.text[:10000]}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -106,7 +106,7 @@ async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
                 "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "codesearch", "version": "1.0"}}
             }, headers=headers)
             if init.status_code != 200:
-                last_err = f"init failed {init.status_code}"
+                last_err = api_error("init failed", init)
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue
@@ -119,7 +119,7 @@ async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
                 "params": {"name": "ask_question", "arguments": ask_args}
             }, headers=headers)
             if r.status_code != 200:
-                last_err = f"DeepWiki HTTP {r.status_code}"
+                last_err = api_error("DeepWiki", r)
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue

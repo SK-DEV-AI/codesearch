@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from config import get_http_client
+from config import get_http_client, api_error
 
 CODEWIKI_URL = "https://codewiki.google/_/BoqAngularSdlcAgentsUi/data/batchexecute"
 MAX_CODEWIKI_RETRIES = 3
@@ -53,7 +53,7 @@ async def codewiki_rpc(rpc_id: str, payload: list, source_path: str = "/") -> di
                 headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
             )
             if r.status_code != 200:
-                last_err = f"CodeWiki HTTP {r.status_code}"
+                last_err = api_error("CodeWiki", r)
                 if attempt < MAX_CODEWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue

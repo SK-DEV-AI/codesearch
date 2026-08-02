@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_client
+from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_client, api_error
 
 
 async def search_libraries_io(name: str, platform: str = "") -> dict:
@@ -75,7 +75,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
         c = get_http_client()
         r = await c.get(f"{LI_API}/search", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io search: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io search", r)}
         data = r.json()
         results = []
         for item in (data if isinstance(data, list) else []):
@@ -107,7 +107,7 @@ async def get_versions(platform: str, name: str) -> dict:
                         params={"api_key": li_key},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io versions: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io versions", r)}
         data = r.json()
         results = []
         for v in (data if isinstance(data, list) else [])[:50]:
@@ -134,7 +134,7 @@ async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
         r = await c.get(url, params={"api_key": li_key},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io dependencies: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io dependencies", r)}
         data = r.json()
         deps = []
         for dep in (data.get("dependencies", []) or [])[:50]:
@@ -155,7 +155,7 @@ async def li_list_platforms(count: int = 50) -> dict:
     try:
         c = get_http_client()
         r = await c.get(LI_API + "/platforms", headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
-        if r.status_code != 200: return {"success": False, "error": f"Libraries.io platforms: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("Libraries.io platforms", r)}
         platforms = [p.get("name", p) if isinstance(p, dict) else p for p in (r.json() or [])[:count]]
         return {"success": True, "platforms": platforms}
     except (httpx.HTTPError, ValueError) as e:
@@ -167,7 +167,7 @@ async def li_list_licenses(count: int = 50) -> dict:
     try:
         c = get_http_client()
         r = await c.get(LI_API + "/licenses", headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
-        if r.status_code != 200: return {"success": False, "error": f"Libraries.io licenses: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("Libraries.io licenses", r)}
         data = r.json() or []
         results = [{"name": l.get("name", l) if isinstance(l, dict) else l} for l in data[:count]]
         return {"success": True, "licenses": results}
@@ -181,7 +181,7 @@ async def li_keyword_projects(keyword: str, count: int = 10) -> dict:
         c = get_http_client()
         r = await c.get(f"{LI_API}/keywords/{keyword}", params={"per_page": min(count, 100)},
                         headers={"User-Agent": "mcp-codesearch/1.0"}, timeout=10)
-        if r.status_code != 200: return {"success": False, "error": f"Libraries.io keyword: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("Libraries.io keyword", r)}
         data = r.json() or []
         results = [{"name": d.get("name", ""), "platform": d.get("platform", ""),
                      "description": d.get("description", ""),
@@ -203,7 +203,7 @@ async def get_dependents(platform: str, name: str) -> dict:
                         params={"api_key": li_key},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io dependents: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io dependents", r)}
         data = r.json()
         results = []
         for dep in (data if isinstance(data, list) else [])[:50]:
@@ -228,7 +228,7 @@ async def get_github_repo(owner: str, repo: str) -> dict:
                         params={"api_key": li_key},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io github: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io github", r)}
         d = r.json()
         return {"success": True, "result": {
             "name": d.get("name", ""),
@@ -258,7 +258,7 @@ async def get_github_dependencies(owner: str, repo: str) -> dict:
                         params={"api_key": li_key},
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Libraries.io github deps: {r.status_code}"}
+            return {"success": False, "error": api_error("Libraries.io github deps", r)}
         data = r.json()
         deps = []
         for dep in (data.get("dependencies", []) or [])[:50]:

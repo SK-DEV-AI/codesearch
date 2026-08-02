@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from config import GUIDE_API, OSS_API, OSS_TOKEN, _cached, _set_cache, _next_oss_key, get_http_client
+from config import GUIDE_API, OSS_API, OSS_TOKEN, _cached, _set_cache, _next_oss_key, get_http_client, api_error
 
 
 async def scan_vulnerabilities(platform: str, name: str, version: str = "",
@@ -28,7 +28,7 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
         r = await c.post(OSS_API, json={"coordinates": purls},
                          headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Sonatype Guide: {r.status_code}"}
+            return {"success": False, "error": api_error("Sonatype Guide", r)}
         data = r.json()
         reports = []
         for comp in (data if isinstance(data, list) else []):
@@ -77,7 +77,7 @@ async def get_vulnerability_detail(vuln_id: str) -> dict:
         if r.status_code == 404:
             return {"success": False, "error": "Vulnerability not found"}
         if r.status_code != 200:
-            return {"success": False, "error": f"Guide API: {r.status_code}"}
+            return {"success": False, "error": api_error("Guide API", r)}
         data = r.json()
         result = {
             "id": data.get("id", ""),
@@ -113,7 +113,7 @@ async def get_component_latest_version(purl: str) -> dict:
                          json={"purl": purl},
                          headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Guide API: {r.status_code}"}
+            return {"success": False, "error": api_error("Guide API", r)}
         data = r.json()
         result = {
             "purl": data.get("purl", ""),
@@ -137,7 +137,7 @@ async def search_vulnerabilities(keyword: str, limit: int = 10) -> dict:
                         params={"q": keyword, "limit": min(limit, 50)},
                         headers={"Authorization": f"Bearer {oss_key}"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Guide security-data: {r.status_code}"}
+            return {"success": False, "error": api_error("Guide security-data", r)}
         data = r.json()
         results = []
         for pkg in (data if isinstance(data, list) else [])[:limit]:
@@ -164,7 +164,7 @@ async def analyze_license(purl: str) -> dict:
                          json={"purls": [purl]},
                          headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Guide license-analysis: {r.status_code}"}
+            return {"success": False, "error": api_error("Guide license-analysis", r)}
         data = r.json()
         results = []
         for comp in (data if isinstance(data, list) else []):
@@ -192,7 +192,7 @@ async def quick_component_report(purl: str) -> dict:
                          json={"coordinates": [purl]},
                          headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Guide component-report/quick: {r.status_code}"}
+            return {"success": False, "error": api_error("Guide component-report/quick", r)}
         data = r.json()
         reports = []
         for comp in (data if isinstance(data, list) else []):

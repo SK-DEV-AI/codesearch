@@ -14,7 +14,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator, api_error
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
@@ -1396,7 +1396,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                             })
                         r = {"success": True, "total": len(papers), "papers": papers}
                     else:
-                        r = {"success": False, "error": f"arXiv returned {resp.status_code}"}
+                        r = {"success": False, "error": api_error("arXiv returned", resp)}
                 except Exception as e:
                     r = {"success": False, "error": str(e)}
             else:

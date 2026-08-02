@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key, get_http_client
+from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key, get_http_client, api_error
 
 logger = logging.getLogger("codesearch.github")
 
@@ -183,7 +183,7 @@ async def fetch_readme(owner: str, repo: str, branch: str = "") -> dict:
         if r.status_code == 404:
             return {"success": False, "error": "no README found"}
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         result = {"success": True, "content": r.text[:15000], "repo": f"{owner}/{repo}"}
         await _set_cache(cache_key, result)
         return result
@@ -199,7 +199,7 @@ async def gh_get_contents(owner: str, repo: str, path: str = "", branch: str = "
             params["ref"] = branch
         r = await _http_request("GET", url, params=params, headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         data = r.json()
         if isinstance(data, list):
             entries = [{"name": f["name"], "type": f["type"], "size": f.get("size", 0)} for f in data]
@@ -220,7 +220,7 @@ async def gh_get_languages(owner: str, repo: str) -> dict:
     try:
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/languages", headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         result = {"success": True, "languages": r.json()}
         await _set_cache(cache_key, result)
         return result
@@ -238,7 +238,7 @@ async def gh_get_topics(owner: str, repo: str) -> dict:
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/topics",
                                 headers=gh_hdrs)
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         result = {"success": True, "topics": r.json().get("names", [])}
         await _set_cache(cache_key, result)
         return result
@@ -255,7 +255,7 @@ async def gh_get_repo(owner: str, repo: str) -> dict:
     try:
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}", headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         d = r.json()
         result = {"success": True,
             "name": d.get("name", ""), "full_name": d.get("full_name", ""),
@@ -346,7 +346,7 @@ async def gh_get_branches(owner: str, repo: str) -> dict:
             default_branch = repo_r.json().get("default_branch", "main")
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/branches", headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         branches = [{"name": b.get("name", ""), "sha": b.get("commit", {}).get("sha", ""),
                       "protected": b.get("protected", False)}
                      for b in (r.json() or [])]
@@ -366,7 +366,7 @@ async def gh_get_tags(owner: str, repo: str) -> dict:
     try:
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/tags", headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         tags = [{"name": t.get("name", ""), "sha": t.get("commit", {}).get("sha", "")}
                  for t in (r.json() or [])]
         result = {"success": True, "tags": tags}
@@ -400,7 +400,7 @@ async def gh_get_tree(owner: str, repo: str, tree_sha: str = "HEAD", recursive: 
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/git/trees/{tree_sha}",
             params=params, headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub tree {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub tree", r)}
         data = r.json()
         entries = []
         for t in (data.get("tree", []) or []):
@@ -426,7 +426,7 @@ async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
         r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/releases",
                                 params={"per_page": min(count, 20)}, headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub", r)}
         items = r.json()[:count]
         results = [{"tag": rel.get("tag_name", ""), "name": rel.get("name", ""),
                      "published": rel.get("published_at", ""), "prerelease": rel.get("prerelease", False),
@@ -454,7 +454,7 @@ async def search_labels(query: str, repository_id: int = 0, sort: str = "",
         r = await _http_request("GET", "https://api.github.com/search/labels",
                                 params=params, headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub labels: {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub labels", r)}
         items = (r.json().get("items", []) or [])[:count]
         results = [{"name": lb.get("name", ""), "description": lb.get("description", ""),
                      "color": lb.get("color", ""), "default": lb.get("default", False)}
@@ -476,7 +476,7 @@ async def search_topics(query: str, count: int = 10) -> dict:
             params={"q": query, "per_page": min(count, 100)},
             headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub topics: {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub topics", r)}
         items = (r.json().get("items", []) or [])[:count]
         results = [{"name": t.get("name", ""), "description": t.get("description", ""),
                      "short_description": t.get("short_description", ""),
@@ -500,7 +500,7 @@ async def gh_get_issue(owner: str, repo: str, issue_number: int) -> dict:
             f"{GH_API}/repos/{owner}/{repo}/issues/{issue_number}",
             headers=await _gh_headers())
         if issue_r.status_code != 200:
-            return {"success": False, "error": f"GitHub issue {issue_r.status_code}"}
+            return {"success": False, "error": api_error("GitHub issue", issue_r)}
         issue = issue_r.json()
 
         comments_r = await _http_request("GET",
@@ -567,7 +567,7 @@ async def gh_get_pr(owner: str, repo: str, pr_number: int) -> dict:
             f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}",
             headers=await _gh_headers())
         if pr_r.status_code != 200:
-            return {"success": False, "error": f"GitHub PR {pr_r.status_code}"}
+            return {"success": False, "error": api_error("GitHub PR", pr_r)}
         pr = pr_r.json()
 
         commits_r = await _http_request("GET",
@@ -645,7 +645,7 @@ async def gh_get_pr_reviews(owner: str, repo: str, pr_number: int) -> dict:
             f"{GH_API}/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
             headers=await _gh_headers())
         if r.status_code != 200:
-            return {"success": False, "error": f"GitHub PR reviews {r.status_code}"}
+            return {"success": False, "error": api_error("GitHub PR reviews", r)}
         reviews = []
         for rev in (r.json() or []):
             reviews.append({
@@ -672,7 +672,7 @@ async def gh_get_user(username: str) -> dict:
         user_r = await _http_request("GET", f"{GH_API}/users/{username}",
             headers=await _gh_headers())
         if user_r.status_code != 200:
-            return {"success": False, "error": f"GitHub user {user_r.status_code}"}
+            return {"success": False, "error": api_error("GitHub user", user_r)}
         u = user_r.json()
 
         repos_r = await _http_request("GET", f"{GH_API}/users/{username}/repos",

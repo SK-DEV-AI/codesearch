@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from config import CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _KeyRotator, get_http_client
+from config import CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _KeyRotator, get_http_client, api_error
 
 _c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
 _next_c7_key = _c7_rotator.next
@@ -63,7 +63,7 @@ async def context7_fetch_docs(library_id: str, query: str, fast: bool = False) -
         if r.status_code == 301:
             return {"success": False, "error": "library not found", "hint": "check library ID format"}
         if r.status_code != 200:
-            return {"success": False, "error": f"context7 returned {r.status_code}"}
+            return {"success": False, "error": api_error("context7 returned", r)}
         data = r.json()
         snippets = []
         code_snippets = []
@@ -147,7 +147,7 @@ async def fetch_llms_txt(url: str) -> dict:
         c = get_http_client()
         r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("", r)}
         text = r.text
         links = []
         lines = text.split("\n")
@@ -174,7 +174,7 @@ async def fetch_doc_url(url: str) -> dict:
         c = get_http_client()
         r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"HTTP {r.status_code}"}
+            return {"success": False, "error": api_error("", r)}
         content = r.text
         try:
             import markdownify
@@ -216,7 +216,7 @@ async def context7_add_repo(provider: str, repo_url: str) -> dict:
         r = await c.post(f"https://context7.com/api/v2/add/repo/{provider}",
             json={"repo_url": repo_url}, headers=await _context7_headers(), timeout=30)
         if r.status_code != 200:
-            return {"success": False, "error": f"Context7 add_repo: {r.status_code}"}
+            return {"success": False, "error": api_error("Context7 add_repo", r)}
         d = r.json()
         return {"success": True, "message": d.get("message", "repo submitted"), "id": d.get("id", "")}
     except (httpx.HTTPError, ValueError) as e:

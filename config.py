@@ -125,6 +125,31 @@ async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
                 await asyncio.sleep(1 * (attempt + 1))
     raise last_err or RuntimeError("HTTP request failed after retries")
 
+
+def api_error(prefix: str, r: httpx.Response, body_chars: int = 250) -> str:
+    """Rich error string: status code + reason + truncated body + rate-limit headers."""
+    parts = [f"{prefix} HTTP {r.status_code}"]
+    if r.reason_phrase:
+        parts.append(r.reason_phrase)
+    body = (r.text or "").strip()
+    if body:
+        body_flat = " ".join(body.split())[:body_chars]
+        if body_flat and body_flat != r.reason_phrase:
+            parts.append(body_flat)
+    if r.status_code in (403, 429):
+        remaining = r.headers.get("x-ratelimit-remaining")
+        reset = r.headers.get("x-ratelimit-reset")
+        if remaining is not None:
+            parts.append(f"rate-limit remaining: {remaining}")
+        if reset is not None:
+            try:
+                when = time.strftime("%H:%M:%S UTC", time.gmtime(int(reset)))
+                parts.append(f"resets: {when}")
+            except (ValueError, OSError):
+                parts.append(f"resets: {reset}")
+    return " | ".join(parts)
+
+
 # ── TTL Cache ───────────────────────────────────────────────────────────────
 _cache: dict[str, tuple[float, Any]] = {}
 _MAX_CACHE = 500

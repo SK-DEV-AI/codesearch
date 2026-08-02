@@ -40,7 +40,8 @@ async def _call(endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
     if resp.status_code == 429:
         return {"success": False, "error": "SearchCode rate limited (429)"}
     if resp.status_code >= 400:
-        return {"success": False, "error": f"SearchCode error ({resp.status_code})"}
+        body = " ".join((resp.text or "").split())[:250]
+        return {"success": False, "error": f"SearchCode error ({resp.status_code}) {body}".rstrip()}
     try:
         data = resp.json()
     except Exception as e:

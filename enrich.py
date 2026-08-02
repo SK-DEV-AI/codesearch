@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from config import get_http_client
+from config import get_http_client, api_error
 from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank, fallback_sort
 from security import SecurityError, validate_url as _validate_url
@@ -46,7 +46,7 @@ async def enrich_results(
                     if not include_html:
                         r["full_content"] = text[:50000]
                 else:
-                    r["__fetch_error"] = f"HTTP {resp.status_code}"
+                    r["__fetch_error"] = api_error("", resp)
             except Exception as e:
                 r["__fetch_error"] = f"{type(e).__name__}: {str(e)[:80]}"
         return r

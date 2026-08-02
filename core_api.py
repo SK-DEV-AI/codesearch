@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from config import get_http_client
+from config import get_http_client, api_error
 
 CORE_API = "https://api.core.ac.uk/v3"
 CORE_SEARCH_WORKS = f"{CORE_API}/search/works/"
@@ -47,7 +47,7 @@ async def search_core_works(query: str, limit: int = 10, offset: int = 0) -> dic
             if follow_url:
                 r = await c.get(follow_url, headers=headers, timeout=15)
         if r.status_code != 200:
-            return {"success": False, "error": f"CORE API: {r.status_code}", "results": []}
+            return {"success": False, "error": api_error("CORE API", r), "results": []}
         data = r.json()
         works = [_extract_work(w) for w in (data.get("results", []) or [])]
         return {

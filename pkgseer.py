@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from config import GITHITS_API_TOKEN
+from config import GITHITS_API_TOKEN, api_error
 
 _PKGSEER_URL = "https://pkgseer.dev"
 _JSDELIVR_API = "https://data.jsdelivr.com/v1"
@@ -227,7 +227,7 @@ async def jsdelivr_list_files(spec: str) -> dict[str, Any]:
     if r.status_code == 403:
         return {"success": False, "error": "jsDelivr: package too large (>100 MB)"}
     if r.status_code != 200:
-        return {"success": False, "error": f"jsDelivr HTTP {r.status_code}"}
+        return {"success": False, "error": api_error("jsDelivr", r)}
     data = r.json()
     files_list = data.get("files", [])
     names = [f["name"] for f in files_list if isinstance(f, dict) and not f.get("files")]
@@ -259,7 +259,7 @@ async def jsdelivr_read_file(spec: str, file_path: str) -> dict[str, Any]:
     except httpx.RequestError as e:
         return {"success": False, "error": f"jsDelivr CDN request failed: {e}"}
     if r.status_code != 200:
-        return {"success": False, "error": f"jsDelivr CDN HTTP {r.status_code}"}
+        return {"success": False, "error": api_error("jsDelivr CDN", r)}
     return {
         "success": True,
         "content": r.text,

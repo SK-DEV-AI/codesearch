@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from config import get_http_client
+from config import get_http_client, api_error
 
 S2_API = "https://api.semanticscholar.org/graph/v1"
 S2_SEARCH = f"{S2_API}/paper/search"
@@ -252,7 +252,7 @@ async def s2_author_by_id(author_id: str, fields: str = "") -> dict:
     try:
         f = fields or _AUTHOR_FIELDS
         r = await _s2_get(f"{S2_AUTHOR}/{author_id}", {"fields": f})
-        if r.status_code != 200: return {"success": False, "error": f"S2 author {author_id}: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error(f"S2 author {author_id}", r)}
         d = r.json()
         return {"success": True, "authorId": d.get("authorId",""), "name": d.get("name",""),
             "affiliations": d.get("affiliations",[]), "citationCount": d.get("citationCount",0),
@@ -268,7 +268,7 @@ async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
         headers = _s2_headers(); headers["Content-Type"] = "application/json"
         c = get_http_client()
         r = await c.post(f"{S2_PAPER}/batch", json={"ids": ids[:500]}, params={"fields": f}, headers=headers)
-        if r.status_code != 200: return {"success": False, "error": f"S2 batch: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("S2 batch", r)}
         data = r.json().get("data", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
@@ -289,7 +289,7 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
         if negative_ids: body["negativePaperIds"] = negative_ids[:20]
         c = get_http_client()
         r = await c.post(S2_RECOMMENDATIONS.replace("/forpaper",""), json=body, params={"fields": f}, headers=headers)
-        if r.status_code != 200: return {"success": False, "error": f"S2 recs: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("S2 recs", r)}
         data = r.json().get("recommendedPapers", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],

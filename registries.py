@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, _cached, _set_cache, get_http_client
+from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, _cached, _set_cache, get_http_client, api_error
 
 NPM_DOWNLOADS = "https://api.npmjs.org/downloads/point/last-month"
 PYPI_STATS = "https://pypistats.org/api/packages"
@@ -139,7 +139,7 @@ async def npm_search(query: str, count: int = 10,
         c = get_http_client()
         r = await c.get(NPM_SEARCH, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"npm search: {r.status_code}"}
+            return {"success": False, "error": api_error("npm search", r)}
         data = r.json()
         results = []
         for obj in data.get("objects", [])[:count]:
@@ -172,7 +172,7 @@ async def _npm_dist_tags(name: str) -> dict:
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/dist-tags",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"npm dist-tags: {r.status_code}"}
+            return {"success": False, "error": api_error("npm dist-tags", r)}
         return {"success": True, "name": name, "dist_tags": r.json()}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -184,7 +184,7 @@ async def get_npm_versions(name: str) -> dict:
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"npm versions: {r.status_code}"}
+            return {"success": False, "error": api_error("npm versions", r)}
         data = r.json()
         versions = sorted(data.get("versions", {}).keys())
         return {"success": True, "name": name, "versions": versions, "total": len(versions)}
@@ -198,7 +198,7 @@ async def get_npm_time(name: str) -> dict:
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"npm time: {r.status_code}"}
+            return {"success": False, "error": api_error("npm time", r)}
         data = r.json()
         time_data = data.get("time", {})
         return {"success": True, "name": name, "time": time_data}
@@ -212,7 +212,7 @@ async def get_npm_version(name: str, version: str) -> dict:
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"npm version: {r.status_code}"}
+            return {"success": False, "error": api_error("npm version", r)}
         data = r.json()
         return {"success": True, "name": data.get("name", name), "version": data.get("version", version),
                 "description": data.get("description", ""),
@@ -227,7 +227,7 @@ async def get_crates_versions(name: str) -> dict:
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates versions: {r.status_code}"}
+            return {"success": False, "error": api_error("crates versions", r)}
         data = r.json()
         versions = []
         for v in (data.get("versions", []) or [])[:50]:
@@ -249,7 +249,7 @@ async def get_pypi_versions(name: str) -> dict:
         r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"PyPI: {r.status_code}"}
+            return {"success": False, "error": api_error("PyPI", r)}
         data = r.json()
         releases = data.get("releases", {}) or {}
         versions = []
@@ -279,7 +279,7 @@ async def get_pypi_version(name: str, version: str) -> dict:
         r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"PyPI version: {r.status_code}"}
+            return {"success": False, "error": api_error("PyPI version", r)}
         data = r.json()
         info = data.get("info", {})
         urls = data.get("urls", [])
@@ -338,7 +338,7 @@ async def crates_search(query: str, count: int = 10,
         r = await c.get(CRATES_SEARCH, params=params,
                         headers={"User-Agent": "mcp-codesearch/1.0 (mcp-codesearch)", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io search: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io search", r)}
         data = r.json()
         results = []
         for crate in data.get("crates", [])[:count]:
@@ -365,7 +365,7 @@ async def _crates_downloads(name: str, count: int = 10) -> dict:
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/downloads",
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io downloads: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io downloads", r)}
         data = r.json()
         return {"success": True, "name": name, "data": (data.get("data", []) or [])[:count]}
     except (httpx.HTTPError, ValueError) as e:
@@ -379,7 +379,7 @@ async def _crates_reverse_deps(name: str, count: int = 10) -> dict:
                         params={"per_page": min(count, 100)},
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io reverse_deps: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io reverse_deps", r)}
         data = r.json()
         results = []
         for dep in (data.get("reverse_dependencies", []) or [])[:count]:
@@ -401,7 +401,7 @@ async def _crates_owners(name: str) -> dict:
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/owners",
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io owners: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io owners", r)}
         data = r.json()
         results = []
         for owner in (data.get("users", []) or []):
@@ -422,7 +422,7 @@ async def _crates_categories() -> dict:
         r = await c.get(f"{CRATES_API}/categories",
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io categories: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io categories", r)}
         data = r.json()
         results = []
         for cat in (data.get("categories", []) or []):
@@ -444,7 +444,7 @@ async def npm_get_version(name: str, version: str) -> dict:
         c = get_http_client()
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
-        if r.status_code != 200: return {"success": False, "error": f"npm version: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("npm version", r)}
         d = r.json()
         return {"success": True, "name": d.get("name",""), "version": d.get("version",""),
             "description": d.get("description",""), "license": d.get("license",""),
@@ -461,7 +461,7 @@ async def crates_get_version(name: str, version: str) -> dict:
         c = get_http_client()
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
             params={"per_page": 100}, headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
-        if r.status_code != 200: return {"success": False, "error": f"crates.io: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("crates.io", r)}
         vers = r.json().get("versions", [])
         found = next((v for v in vers if v.get("num") == version), {})
         if not found: return {"success": False, "error": f"version {version} not found"}
@@ -480,7 +480,7 @@ async def crates_get_readme(name: str, version: str) -> dict:
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions/{urllib.parse.quote(version)}/readme",
             headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "text/html"})
         if r.status_code == 404: return {"success": False, "error": "no readme", "name": name}
-        if r.status_code != 200: return {"success": False, "error": f"crates.io readme: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("crates.io readme", r)}
         return {"success": True, "readme": r.text[:10000], "name": name}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -492,7 +492,7 @@ async def crates_get_summary() -> dict:
         c = get_http_client()
         r = await c.get(f"{CRATES_API}/summary",
             headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
-        if r.status_code != 200: return {"success": False, "error": f"crates.io summary: {r.status_code}"}
+        if r.status_code != 200: return {"success": False, "error": api_error("crates.io summary", r)}
         d = r.json()
         top_pkgs = []
         for crate in (d.get("most_downloaded",[]) or [])[:10]:
@@ -509,7 +509,7 @@ async def _crates_keywords() -> dict:
         r = await c.get(f"{CRATES_API}/keywords",
                         headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200:
-            return {"success": False, "error": f"crates.io keywords: {r.status_code}"}
+            return {"success": False, "error": api_error("crates.io keywords", r)}
         data = r.json()
         results = []
         for kw in (data.get("keywords", []) or []):

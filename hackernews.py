@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import _cached, _set_cache, get_http_client
+from config import _cached, _set_cache, get_http_client, api_error
 
 HN_ALGOLIA = "https://hn.algolia.com/api/v1"
 HN_FIREBASE = "https://hacker-news.firebaseio.com/v0"
@@ -41,7 +41,7 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
         c = get_http_client()
         r = await c.get(endpoint, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Algolia: {r.status_code}"}
+            return {"success": False, "error": api_error("Algolia", r)}
         data = r.json()
         hits = data.get("hits", [])[:count]
         results = []
@@ -68,7 +68,7 @@ async def hn_get_item(item_id: int) -> dict:
         r = await c.get(f"{HN_ALGOLIA}/items/{item_id}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Algolia: {r.status_code}"}
+            return {"success": False, "error": api_error("Algolia", r)}
         data = r.json()
         return {
             "success": True,
@@ -92,7 +92,7 @@ async def hn_firebase_stories(story_type: str = "top", count: int = 10) -> dict:
         c = get_http_client()
         r = await c.get(f"{HN_FIREBASE}/{fb_key}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Firebase: {r.status_code}"}
+            return {"success": False, "error": api_error("Firebase", r)}
         ids = (r.json() or [])[:count]
 
         async def _fetch_item(cid: int, client: httpx.AsyncClient) -> dict | None:
@@ -131,7 +131,7 @@ async def hn_get_user(username: str) -> dict:
         c = get_http_client()
         r = await c.get(f"{HN_FIREBASE}/user/{username}.json", headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
-            return {"success": False, "error": f"Firebase user: {r.status_code}"}
+            return {"success": False, "error": api_error("Firebase user", r)}
         data = r.json()
         if not data:
             return {"success": False, "error": f"User not found: {username}"}

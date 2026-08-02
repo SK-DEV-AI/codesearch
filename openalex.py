@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from config import get_http_client
+from config import get_http_client, api_error
 
 OPENALEX_API = "https://api.openalex.org"
 
@@ -31,7 +31,7 @@ async def _openalex_get(endpoint: str, params: dict[str, Any]) -> dict:
             timeout=15,
         )
         if r.status_code != 200:
-            return {"success": False, "error": f"OpenAlex {endpoint}: {r.status_code}"}
+            return {"success": False, "error": api_error(f"OpenAlex {endpoint}", r)}
         return {"success": True, "data": r.json()}
     except Exception as e:
         return {"success": False, "error": str(e)}
