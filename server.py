@@ -20,7 +20,8 @@ from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
 from github_api import (search_github, fetch_readme, gh_get_contents, gh_get_languages,
     gh_get_topics, gh_get_releases, gh_get_repo, search_commits, gh_get_branches,
-    gh_get_tags, gh_get_tree, search_labels, search_topics)
+    gh_get_tags, gh_get_tree, search_labels, search_topics, gh_get_issue, gh_get_pr,
+    gh_get_pr_reviews, gh_get_user)
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
 from pkgseer import (
