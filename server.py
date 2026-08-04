@@ -18,10 +18,7 @@ from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_clien
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
-from github_api import (search_github, fetch_readme, gh_get_contents, gh_get_languages,
-    gh_get_topics, gh_get_releases, gh_get_repo, search_commits, gh_get_branches,
-    gh_get_tags, gh_get_tree, search_labels, search_topics, gh_get_issue, gh_get_pr,
-    gh_get_pr_reviews, gh_get_user)
+from github_api import search_github
 from deepwiki import deepwiki_fetch, deepwiki_ask
 from codewiki import codewiki_fetch_repo, codewiki_search_repos, codewiki_ask_repo
 from pkgseer import (
@@ -80,7 +77,7 @@ Code search, package analysis, documentation, vulnerability scanning.
 ## When to use what
 
 - **search_all** for broad discovery (multi-source). **analyze** for deep repo understanding.
-- **github** for repo metadata, issues, PRs, file tree, commits, users. Use action=repo for repo info (stars, language, topics), action=user for user profiles.
+- **GitHub data via gh CLI, not this server** — you have authenticated `gh` (SK-DEV-AI) in shell. Prefer it: `gh issue view N -R OWNER/REPO`, `gh pr view N -R OWNER/REPO [--diff]`, `gh repo view OWNER/REPO --json ...`, `gh search code "term" -R OWNER/REPO`, `gh search repos/issues/users/commits`, `gh release list -R OWNER/REPO`, `gh api` for any endpoint (add `--paginate`, filter with `--jq`). gh also does mutations — issues/PRs/comments/releases. The server's github tool is gone; use gh for everything GitHub-specific.
 - **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing.
 - **docs** for API/library docs (Context7→DevDocs→ReadTheDocs). **wiki** for repo architecture Q&A.
 - **papers** for academic research (Semantic Scholar+CORE+arXiv). **so_search** for community Q&A, **hn** for tech discussion.
@@ -94,13 +91,13 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 
 ## Params
 
-- `language`: code/github/search_all — always pass known languages
+- `language`: always pass known languages
 - `tags`: SO queries — scope to ecosystem (python, react, rust)
 - `owner`/`repo`: GitHub-specific queries
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `synthesize=true`: get a Groq-summarized answer (default off for search_all/searchcode/github/code tools)
+- `synthesize=true`: get a Groq-summarized answer (default off for search_all/searchcode/code tools)
 """)
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -134,54 +131,6 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
-            },
-        ),
-        Tool(
-            name="github",
-            description="GitHub operations: search code/repos/issues/users/commits, repo readme/contents/languages/topics/releases/metadata/branches/tags/file-tree, issue/PR detail with comments/reviews, user/org profiles, community health, SBOM. Use start_line/end_line with contents action for targeted source reads. e.g. github(action='issue', owner='sst', repo='opencode', issue_number=42)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["search", "readme", "contents", "languages", "topics", "releases", "repo", "commits", "branches", "tags", "tree", "search_labels", "search_topics", "issue", "pr", "pr_reviews", "user"], "default": "search"},
-                    "query": {"type": "string"},
-                    "search_type": {"type": "string", "enum": ["code","repos","issues","users"], "default": "code"},
-                    "owner": {"type": "string"},
-                    "repo": {"type": "string"},
-                    "language": {"type": "string"},
-                    "count": {"type": "integer", "default": 10},
-                    "sort": {"type": "string"},
-                    "order": {"type": "string"},
-                    "filename": {"type": "string"},
-                    "extension": {"type": "string"},
-                    "path": {"type": "string"},
-                    "created": {"type": "string"},
-                    "pushed": {"type": "string"},
-                    "state": {"type": "string"},
-                    "labels": {"type": "string"},
-                    "user": {"type": "string"},
-                    "org": {"type": "string"},
-                    "size": {"type": "string"},
-                    "is_": {"type": "string"},
-                    "stars": {"type": "string"},
-                    "forks": {"type": "string"},
-                    "topics": {"type": "string"},
-                    "in_qualifier": {"type": "string"},
-                    "exclude_qualifier": {"type": "string"},
-                    "merged": {"type": "string"},
-                    "head": {"type": "string"},
-                    "base": {"type": "string"},
-                    "review": {"type": "string"},
-                    "start_line": {"type": "integer", "description": "1-based start line for contents action (slices file content by newline)"},
-                    "end_line": {"type": "integer", "description": "1-based end line (inclusive) for contents action"},
-                    "author": {"type": "string", "description": "Author to filter by (commits action)"},
-                    "tree_sha": {"type": "string", "default": "HEAD", "description": "Tree SHA or HEAD for tree action"},
-                    "recursive": {"type": "boolean", "default": True, "description": "Recursive tree for tree action"},
-                    "branch": {"type": "string", "description": "Branch name (readme/contents actions)"},
-                    "issue_number": {"type": "integer", "description": "Issue/PR number (issue, pr, pr_reviews actions)"},
-                    "pr_number": {"type": "integer", "description": "PR number (pr, pr_reviews actions)"},
-                    "username": {"type": "string", "description": "GitHub username (user action)"},
-                },
-                "required": ["action"],
             },
         ),
         Tool(
@@ -567,121 +516,6 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     results[target] = {"reachable": False, "error": str(e)[:60]}
             return _res({"success": True, "connectivity": results})
 
-        if name == "github":
-            action = str(arguments.get("action", "search"))
-            if action == "search":
-                r = await search_github(
-                    q=str(arguments.get("query", "")),
-                    search_type=str(arguments.get("search_type", "code")),
-                    count=int(arguments.get("count", 10)),
-                    owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    language=str(arguments.get("language", "")),
-                    sort=str(arguments.get("sort", "")),
-                    order=str(arguments.get("order", "")),
-                    filename=str(arguments.get("filename", "")),
-                    extension=str(arguments.get("extension", "")),
-                    path=str(arguments.get("path", "")),
-                    created=str(arguments.get("created", "")),
-                    pushed=str(arguments.get("pushed", "")),
-                    state=str(arguments.get("state", "")),
-                    labels=str(arguments.get("labels", "")),
-                    user=str(arguments.get("user", "")),
-                    org=str(arguments.get("org", "")),
-                    size=str(arguments.get("size", "")),
-                    is_=str(arguments.get("is_", "")),
-                    stars=str(arguments.get("stars", "")),
-                    forks=str(arguments.get("forks", "")),
-                    topics=str(arguments.get("topics", "")),
-                    in_qualifier=str(arguments.get("in_qualifier", "")),
-                    exclude_qualifier=str(arguments.get("exclude_qualifier", "")),
-                    merged=str(arguments.get("merged", "")),
-                    head=str(arguments.get("head", "")),
-                    base=str(arguments.get("base", "")),
-                    review=str(arguments.get("review", "")),
-                )
-            elif action == "readme":
-                r = await fetch_readme(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    branch=str(arguments.get("branch", "")))
-            elif action == "contents":
-                r = await gh_get_contents(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    path=str(arguments.get("path", "")),
-                    branch=str(arguments.get("branch", "")))
-                if r.get("success") and r.get("content"):
-                    all_lines = r["content"].split("\n")
-                    r["total_lines"] = len(all_lines)
-                    r["total_chars"] = len(r["content"])
-                    start_line = int(arguments.get("start_line", 0))
-                    end_line = int(arguments.get("end_line", 0))
-                    if start_line > 0:
-                        if end_line > 0:
-                            r["content"] = "\n".join(all_lines[start_line - 1:end_line])
-                        else:
-                            r["content"] = "\n".join(all_lines[start_line - 1:])
-                        r["returned_lines"] = r["content"].count("\n") + 1
-            elif action == "languages":
-                r = await gh_get_languages(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")))
-            elif action == "topics":
-                r = await gh_get_topics(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")))
-            elif action == "releases":
-                r = await gh_get_releases(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    count=int(arguments.get("count", 5)))
-            elif action == "repo":
-                r = await gh_get_repo(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")))
-            elif action == "commits":
-                r = await search_commits(query=str(arguments.get("query", "")),
-                    count=int(arguments.get("count", 10)),
-                    owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    author=str(arguments.get("author", "")),
-                    sort=str(arguments.get("sort", "")),
-                    order=str(arguments.get("order", "")),
-                    page=int(arguments.get("page", 1)))
-            elif action == "branches":
-                r = await gh_get_branches(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")))
-            elif action == "tags":
-                r = await gh_get_tags(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")))
-            elif action == "tree":
-                r = await gh_get_tree(owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    tree_sha=str(arguments.get("tree_sha", "HEAD")),
-                    recursive=bool(arguments.get("recursive", True)))
-            elif action == "search_labels":
-                r = await search_labels(query=str(arguments.get("query","")),
-                    count=int(arguments.get("count",10)))
-            elif action == "search_topics":
-                r = await search_topics(query=str(arguments.get("query","")),
-                    count=int(arguments.get("count",10)))
-            elif action == "issue":
-                r = await gh_get_issue(
-                    owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    issue_number=int(arguments.get("issue_number", 0)))
-            elif action == "pr":
-                r = await gh_get_pr(
-                    owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    pr_number=int(arguments.get("pr_number", 0)))
-            elif action == "pr_reviews":
-                r = await gh_get_pr_reviews(
-                    owner=str(arguments.get("owner", "")),
-                    repo=str(arguments.get("repo", "")),
-                    pr_number=int(arguments.get("pr_number", 0)))
-            elif action == "user":
-                r = await gh_get_user(
-                    username=str(arguments.get("username", "")))
-            else:
-                return _res({"error": f"unknown github action: {action}"}, False)
-            return _res(r, r.get("success", False))
-
         elif name == "wiki":
             action = str(arguments.get("action", ""))
             if action == "search":
@@ -1028,7 +862,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     "success": False,
                     "source": "none",
                     "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
-                    "hint": "Try wiki, github, or fetch(url) for this library",
+                    "hint": "Try wiki, or fetch(url) for this library",
                 })
             elif action == "devdocs_list":
                 r = await devdocs_list_docs()
@@ -1528,7 +1362,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             r = await search_github(
                 q="", sort="stars", order="desc",
                 created=f">{since_date}", language=language,
-                count=limit, search_type="repositories")
+                count=limit, search_type="repos")
             for item in r.get("results", []):
                 if isinstance(item, dict):
                     item["source"] = source

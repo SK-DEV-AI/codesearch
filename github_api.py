@@ -61,7 +61,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
             query_parts.append(f"in:{in_qualifier}")
         if is_:
             query_parts.append(f"is:{is_}")
-        if created and search_type == "issues":
+        if created and search_type in ("issues", "repos"):
             query_parts.append(f"created:{created}")
         if pushed and search_type == "repos":
             query_parts.append(f"pushed:{pushed}")
