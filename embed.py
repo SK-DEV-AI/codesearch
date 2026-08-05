@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import re
 from collections import Counter, defaultdict
@@ -20,7 +21,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
     uncached = []
     uncached_idx = []
     for i, t in enumerate(texts):
-        k = f"emb:{input_type}:{t[:200]}"
+        k = f"emb:{input_type}:{hashlib.sha256(t.encode()).hexdigest()}"
         c = await _cached(k)
         if c is not None:
             results[i] = c
@@ -42,7 +43,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                     if emb:
                         orig_idx = uncached_idx[idx]
                         results[orig_idx] = emb
-                        await _set_cache(f"emb:{input_type}:{uncached[idx][:200]}", emb)
+                        await _set_cache(f"emb:{input_type}:{hashlib.sha256(uncached[idx].encode()).hexdigest()}", emb)
         except (httpx.HTTPError, ValueError, KeyError):
             pass
     return results
