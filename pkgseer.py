@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from config import GITHITS_API_TOKEN, api_error
+from config import GITHITS_API_TOKEN, api_error, get_http_client
 
 _PKGSEER_URL = "https://pkgseer.dev"
 _JSDELIVR_API = "https://data.jsdelivr.com/v1"
@@ -40,8 +40,7 @@ def _check_token() -> dict[str, Any] | None:
 async def _post_json(url: str, body: dict[str, Any], timeout: int = _TIMEOUT) -> dict[str, Any]:
     """POST JSON, return parsed JSON on 2xx or an error dict."""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.post(url, headers=_HEADERS, json=body)
+        resp = await get_http_client().post(url, headers=_HEADERS, json=body, timeout=timeout)
     except httpx.TimeoutException:
         return {"success": False, "error": f"PkgSeer request timed out ({timeout}s)"}
     except httpx.RequestError as e:
@@ -215,13 +214,19 @@ async def jsdelivr_list_files(spec: str) -> dict[str, Any]:
     version = ""
     if "@" in pkg_name and not pkg_name.startswith("@"):
         pkg_name, version = pkg_name.rsplit("@", 1)
-    url = f"{_JSDELIVR_API}/packages/npm/{pkg_name}"
-    if version:
-        url += f"@{version}"
-    url += "?structure=flat"
+    c = get_http_client()
+    # The /packages endpoint only returns files when a version is pinned.
+    # Resolve latest from the tags listing first, then fetch files flat.
+    if not version:
+        meta = await c.get(f"{_JSDELIVR_API}/packages/npm/{pkg_name}")
+        if meta.status_code != 200:
+            return {"success": False, "error": api_error("jsDelivr", meta)}
+        version = str((meta.json().get("tags") or {}).get("latest", ""))
+        if not version:
+            return {"success": False, "error": "jsDelivr: no latest tag for package"}
+    url = f"{_JSDELIVR_API}/packages/npm/{pkg_name}@{version}?structure=flat"
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(url)
+        r = await c.get(url)
     except httpx.RequestError as e:
         return {"success": False, "error": f"jsDelivr request failed: {e}"}
     if r.status_code == 403:
@@ -254,8 +259,7 @@ async def jsdelivr_read_file(spec: str, file_path: str) -> dict[str, Any]:
     file_path_clean = file_path if file_path.startswith("/") else f"/{file_path}"
     url = f"https://cdn.jsdelivr.net/npm/{pkg_name}{ver_part}{file_path_clean}"
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-            r = await c.get(url)
+        r = await get_http_client().get(url, follow_redirects=True)
     except httpx.RequestError as e:
         return {"success": False, "error": f"jsDelivr CDN request failed: {e}"}
     if r.status_code != 200:

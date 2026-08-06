@@ -121,7 +121,8 @@ async def resolve_package(registry: str, name: str, version: str = "") -> dict[s
                     "download_url": f"https://crates.io/crates/{name}",
                 }
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        pass
+        logger.warning("resolve_package %s/%s failed: %s", registry, name, e)
+        return {"success": False, "error": f"registry lookup failed: {e}"}
 
     return {"success": False, "error": f"package '{name}' not found in registry '{registry}'"}
 
@@ -159,7 +160,8 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
                     f.rename(cache_dir / f.name)
                 shutil.rmtree(str(strip_dir))
         return str(cache_dir)
-    except (httpx.HTTPError, OSError, tarfile.TarError):
+    except (httpx.HTTPError, OSError, tarfile.TarError) as e:
+        logger.warning("download/extract failed for %s: %s", name, e)
         return None
 
 
@@ -236,11 +238,14 @@ async def get_pkg_changelog(name: str, registry: str = "auto",
         return r
     releases = r.get("releases", [])
     filtered = []
+    def _vkey(s: str) -> tuple:
+        parts = s.lstrip("v").split(".")
+        return tuple(int(p) if p.isdigit() else (0 if p else 0) for p in parts)
     for rel in releases:
         tag = rel.get("tag", "").lstrip("v")
-        if from_version and tag < from_version:
+        if from_version and _vkey(tag) < _vkey(from_version):
             continue
-        if to_version and tag > to_version:
+        if to_version and _vkey(tag) > _vkey(to_version):
             continue
         filtered.append(rel)
         if len(filtered) >= count:

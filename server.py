@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from typing import Any
 
@@ -15,6 +15,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
 from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator, api_error
+
+_groq_rotator = _KeyRotator("GROQ_API_KEYS")
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
@@ -51,7 +53,7 @@ from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_compo
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
     readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
-    get_npm_time, get_npm_version, get_crates_versions,
+    get_npm_time, get_crates_versions,
     get_pypi_version, get_pypi_versions,
     npm_get_version, crates_get_version, crates_get_readme, crates_get_summary)
 from devdocs import (devdocs_list_docs, devdocs_fetch, devdocs_fetch_content,
@@ -190,7 +192,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|pypi_versions|pypi_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query"},
+                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|pypi_versions|pypi_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query. NOTE: crates_summary, crates_categories, crates_keywords ignore name (global stats); depsdev_* take name as a PURL (e.g. pkg:npm/express@4.18)"},
                     "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
@@ -205,7 +207,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["stackexchange", "sofa"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/min, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY)"},
+                    "action": {"type": "string", "enum": ["stackexchange", "sofa", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers", "users"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/min, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY). questions_by_ids/search_users/search_tags/question_comments/questions/answers/users are Stack Exchange sub-actions"},
                     "query": {"type": "string"},
                     "count": {"type": "integer", "default": 5},
                     "tags": {"type": "string"},
@@ -552,6 +554,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 try:
                     r = await asyncio.wait_for(deepwiki_ask(owner=owner, repo=repo, question=question, repos=deep_repos), timeout=60)
                 except asyncio.TimeoutError:
+                    logger.warning("DeepWiki timeout for %s/%s", owner, repo)
                     r = {"success": False, "error": "DeepWiki timeout"}
                 else:
                     if r.get("success"):
@@ -644,8 +647,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 r = pkg_info
                 if pkg_info.get("success"):
                     try:
-                        from libraries_io import search_libraries
-                        lib_info = await search_libraries(
+                        from libraries_io import search_libraries_io
+                        lib_info = await search_libraries_io(
                             name=pkg_name, platform=pkg_info["registry"])
                         if lib_info.get("success"):
                             r["libraries_io"] = lib_info
@@ -845,13 +848,13 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     f"{base}.dev", f"docs.{base}.io", f"{base}.readthedocs.io",
                     f"docs.{base}.org", f"{base}.docs.org", f"{base}.docs.dev", f"www.{base}.dev",
                 ]
-                llms = None
-                for domain in domains:
-                    llms = await search_llms_txt(domain, query)
-                    if llms.get("success") and llms.get("results"):
-                        llms["source"] = "llms.txt"
-                        llms["domain"] = domain
-                        break
+                llms_results = await asyncio.gather(
+                    *(search_llms_txt(d, query) for d in domains), return_exceptions=True)
+                llms = next((r for r in llms_results
+                             if isinstance(r, dict) and r.get("success") and r.get("results")), None)
+                if llms:
+                    llms["source"] = "llms.txt"
+                    llms["domain"] = domains[llms_results.index(llms)]
                 if llms and llms.get("success") and llms.get("results"):
                     return _res(llms)
                 dd = await devdocs_search(base, query)
@@ -1002,6 +1005,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                         try:
                             res[n] = w.result()
                         except asyncio.CancelledError:
+                            logger.warning("gather: %s cancelled", n)
                             continue
                         except Exception as e:
                             res[n] = e
@@ -1024,6 +1028,9 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     source_availability[name_] = "failed"
 
             merged: dict[str, Any] = {"source_availability": source_availability}
+            if "success" not in source_availability.values():
+                return _res({"error": "all search sources failed (check source_availability)",
+                             "source_availability": source_availability}, False)
             flat_items: list[dict] = []
             for name_, result in results.items():
                 if isinstance(result, BaseException):
@@ -1125,12 +1132,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                     top = merged["deduped_results"][:3]
                     ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
                                      for i, x in enumerate(top))
-                    _groq_keys = _KeyRotator("GROQ_API_KEYS")
-                    if _groq_keys.has_keys:
+                    if _groq_rotator.has_keys:
+                        _gkey = await _groq_rotator.next()
                         c = get_http_client()
                         resp = await c.post(
                             "https://api.groq.com/openai/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {_groq_keys.next()}", "Content-Type": "application/json"},
+                            headers={"Authorization": f"Bearer {_gkey}", "Content-Type": "application/json"},
                             json={"model": "openai/gpt-oss-120b",
                                   "messages": [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
                                                {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
@@ -1247,12 +1254,9 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         elif name == "searchcode":
             action = str(arguments.get("action", ""))
             repo = str(arguments.get("repository", ""))
-            # Accept owner/repo shorthand and package specs
-            if repo and not repo.startswith("http"):
-                if repo.startswith(("npm:", "pypi:", "crates:")):
-                    repo = f"https://github.com/{repo}"  # searchcode will handle gracefully
-                elif "/" in repo and not repo.startswith(("gh:", "github:")):
-                    repo = f"https://github.com/{repo}"
+            # Accept owner/repo shorthand
+            if repo and not repo.startswith("http") and "/" in repo and not repo.startswith(("gh:", "github:")):
+                repo = f"https://github.com/{repo}"
             if not repo:
                 return _res({"error": "repository is required for searchcode"}, False)
             if action == "analyze":
@@ -1313,7 +1317,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             spec = str(arguments.get("spec", ""))
             path = str(arguments.get("path", ""))
             # Try jsDelivr CDN first for npm (faster, CDN-served)
-            if spec.startswith("npm:") or ":" not in spec or spec == "npm":
+            if spec.startswith("npm:") or ":" not in spec:
                 jr = await jsdelivr_read_file(spec, path)
                 if jr.get("success"):
                     return _res(jr)
@@ -1342,7 +1346,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             max_fetch = int(arguments.get("max_fetch_size", 50))
             include_html = bool(arguments.get("include_html", False))
             if not raw_results or not isinstance(raw_results, list):
-                return _res({"error": "results must be a non-empty list"})
+                return _res({"error": "results must be a non-empty list"}, False)
             r = await enrich_results(query, raw_results, top_k=top_k,
                                      max_fetch_size=max_fetch, include_html=include_html)
             return _res(r, r.get("success", False))
@@ -1358,7 +1362,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             since = str(arguments.get("since", "weekly"))
             limit = int(arguments.get("limit", 10))
             days = {"daily": 1, "weekly": 7, "monthly": 30}.get(since, 7)
-            since_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            since_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
             r = await search_github(
                 q="", sort="stars", order="desc",
                 created=f">{since_date}", language=language,
@@ -1381,6 +1385,8 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         return _res({"error": str(e)}, False)
     except Exception as e:
         return _res({"error": f"{type(e).__name__}: {e}"}, False)
+    except asyncio.CancelledError:
+        raise
     except BaseException as e:
         return _res({"error": f"handler interrupted: {type(e).__name__}"}, False)
 

@@ -41,9 +41,10 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
     elif registry in REGISTRIES:
         registries_to_try = [(registry, REGISTRIES[registry])]
     results = {}
+    qname = urllib.parse.quote(name, safe="@/")
     for reg_name, url_template in registries_to_try:
         try:
-            url = url_template.format(name=name)
+            url = url_template.format(name=qname)
             headers = {"User-Agent": "mcp-codesearch/1.0"}
             if reg_name == "crates":
                 headers["Accept"] = "application/json"
@@ -120,22 +121,11 @@ async def search_package(name: str, registry: str = "auto", type: str = "") -> d
     return {"success": True, "registries_checked": list(results.keys()), "results": results}
 
 
-async def npm_search(query: str, count: int = 10,
-                     quality: float = 0.0, popularity: float = 0.0, maintenance: float = 0.0,
-                     type: str = "search", name: str = "",
-                     size: float = 0.0) -> dict:
+async def npm_search(query: str, count: int = 10, type: str = "search", name: str = "") -> dict:
     if type == "dist_tags":
         return await _npm_dist_tags(name)
     try:
         params: dict[str, Any] = {"text": query, "size": min(count, 250)}
-        if quality > 0:
-            params["quality"] = quality
-        if popularity > 0:
-            params["popularity"] = popularity
-        if maintenance > 0:
-            params["maintenance"] = maintenance
-        if size > 0:
-            params["size"] = size
         c = get_http_client()
         r = await c.get(NPM_SEARCH, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
@@ -202,21 +192,6 @@ async def get_npm_time(name: str) -> dict:
         data = r.json()
         time_data = data.get("time", {})
         return {"success": True, "name": name, "time": time_data}
-    except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
-
-
-async def get_npm_version(name: str, version: str) -> dict:
-    try:
-        c = get_http_client()
-        r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
-                        headers={"User-Agent": "mcp-codesearch/1.0"})
-        if r.status_code != 200:
-            return {"success": False, "error": api_error("npm version", r)}
-        data = r.json()
-        return {"success": True, "name": data.get("name", name), "version": data.get("version", version),
-                "description": data.get("description", ""),
-                "dependencies": list(data.get("dependencies", {}).keys())[:20]}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
 
@@ -459,11 +434,10 @@ async def crates_get_version(name: str, version: str) -> dict:
     """Get metadata for a specific version of a crate."""
     try:
         c = get_http_client()
-        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions",
-            params={"per_page": 100}, headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
+            headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("crates.io", r)}
-        vers = r.json().get("versions", [])
-        found = next((v for v in vers if v.get("num") == version), {})
+        found = r.json().get("version", {})
         if not found: return {"success": False, "error": f"version {version} not found"}
         return {"success": True, "name": name, "version": version,
             "license": found.get("license",""), "downloads": found.get("downloads",0),

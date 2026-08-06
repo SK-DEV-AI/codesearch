@@ -7,6 +7,10 @@ import httpx
 from config import GUIDE_API, OSS_API, OSS_TOKEN, _cached, _set_cache, _next_oss_key, get_http_client, api_error
 
 
+def cargo_platform(platform: str) -> str:
+    return "cargo" if platform == "crates" else platform
+
+
 async def scan_vulnerabilities(platform: str, name: str, version: str = "",
                                coordinates: str = "") -> dict:
     if not OSS_TOKEN:
@@ -15,7 +19,7 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
     if coordinates:
         purls = [c.strip() for c in coordinates.split(",") if c.strip()]
     else:
-        purl = f"pkg:{platform}/{name}"
+        purl = f"pkg:{cargo_platform(platform)}/{name}"
         if version:
             purl += f"@{version}"
         purls = [purl]

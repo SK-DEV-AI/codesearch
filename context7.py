@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import urllib.parse
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import httpx
 
 from config import CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _KeyRotator, get_http_client, api_error
+
+logger = logging.getLogger("context7")
 
 _c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
 _next_c7_key = _c7_rotator.next
@@ -28,6 +31,7 @@ async def context7_search_lib(query: str, fast: bool = False, page: int = 1, lim
         c = get_http_client()
         r = await c.get(CONTEXT7_SEARCH, params=params, headers=await _context7_headers())
         if r.status_code != 200:
+            logger.warning("context7 search non-200: %s", api_error("context7", r))
             return []
         data = r.json()
         results = []
@@ -46,6 +50,7 @@ async def context7_search_lib(query: str, fast: bool = False, page: int = 1, lim
             })
         return results
     except (httpx.HTTPError, ValueError, KeyError) as e:
+        logger.warning("context7 search failed: %s", e)
         return []
 
 

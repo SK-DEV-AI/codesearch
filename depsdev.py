@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -10,9 +11,13 @@ from config import get_http_client, api_error
 DEPSDEV_API = "https://api.deps.dev/v3"
 
 
+def _q(s: str) -> str:
+    return urllib.parse.quote(s, safe="")
+
+
 async def get_resolved_dependencies(system: str, package: str, version: str) -> dict:
     try:
-        url = f"{DEPSDEV_API}/systems/{system}/packages/{package}/versions/{version}:dependencies"
+        url = f"{DEPSDEV_API}/systems/{_q(system)}/packages/{_q(package)}/versions/{_q(version)}:dependencies"
         c = get_http_client()
         r = await c.get(url, timeout=15)
         if r.status_code != 200:
@@ -48,7 +53,7 @@ async def get_resolved_dependencies(system: str, package: str, version: str) -> 
 
 async def get_package_info(system: str, package: str) -> dict:
     try:
-        url = f"{DEPSDEV_API}/systems/{system}/packages/{package}"
+        url = f"{DEPSDEV_API}/systems/{_q(system)}/packages/{_q(package)}"
         c = get_http_client()
         r = await c.get(url, timeout=10)
         if r.status_code != 200:

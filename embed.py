@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import re
 from collections import Counter, defaultdict
 
 import httpx
 
-from config import NV_BASE, NV_EMBED_MODEL, NV_KEY, _cached, _set_cache, _KeyRotator, get_http_client
+from config import NV_BASE, NV_EMBED_MODEL, _cached, _set_cache, _KeyRotator, get_http_client
+
+logger = logging.getLogger("embed")
 
 _nv_rotator = _KeyRotator("NV_KEY")
 _next_nv_key = _nv_rotator.next
@@ -44,8 +47,8 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                         orig_idx = uncached_idx[idx]
                         results[orig_idx] = emb
                         await _set_cache(f"emb:{input_type}:{hashlib.sha256(uncached[idx].encode()).hexdigest()}", emb)
-        except (httpx.HTTPError, ValueError, KeyError):
-            pass
+        except (httpx.HTTPError, ValueError, KeyError) as e:
+            logger.warning("embed failed: %s", e)
     return results
 
 

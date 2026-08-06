@@ -91,7 +91,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
                 "forks": item.get("forks", 0),
                 "dependent_repos": item.get("dependent_repos_count", 0),
             })
-        await _set_cache(cache_key, results)
+        await _set_cache(cache_key, {"success": True, "results": results, "total": len(results)})
         return {"success": True, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
