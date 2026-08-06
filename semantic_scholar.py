@@ -37,7 +37,7 @@ def _s2_headers() -> dict[str, str]:
 async def _s2_get(url: str, params: dict | None = None, timeout: int = 15) -> httpx.Response:
     for attempt in range(_S2_RETRIES):
         c = get_http_client()
-        r = await c.get(url, params=params, headers=_s2_headers())
+        r = await c.get(url, params=params, headers=_s2_headers(), timeout=timeout)
         if r.status_code != 429 or attempt == _S2_RETRIES - 1:
             return r
         await asyncio.sleep(2 ** attempt)
@@ -47,7 +47,7 @@ async def _s2_get(url: str, params: dict | None = None, timeout: int = 15) -> ht
 async def _s2_post(url: str, json: dict, params: dict | None = None, timeout: int = 30) -> httpx.Response:
     for attempt in range(_S2_RETRIES):
         c = get_http_client()
-        r = await c.post(url, json=json, params=params, headers=_s2_headers())
+        r = await c.post(url, json=json, params=params, headers=_s2_headers(), timeout=timeout)
         if r.status_code != 429 or attempt == _S2_RETRIES - 1:
             return r
         await asyncio.sleep(2 ** attempt)

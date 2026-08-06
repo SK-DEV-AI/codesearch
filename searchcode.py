@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from config import get_http_client
+
 _API = "https://api.searchcode.com/api/v1"
 _CLIENT = "opencode-codesearch"
 _TIMEOUT = 30
@@ -29,8 +31,7 @@ async def _call(endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
     """POST to a SearchCode API endpoint and return the JSON response."""
     url = f"{_API}/{endpoint}?client={_CLIENT}"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(url, json=body)
+        resp = await get_http_client().post(url, json=body, timeout=_TIMEOUT)
     except httpx.TimeoutException:
         return {"success": False, "error": f"SearchCode {endpoint} timed out"}
     except httpx.RequestError as e:

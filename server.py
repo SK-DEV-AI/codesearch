@@ -70,7 +70,7 @@ from tavily_search import tavily_search
 from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
-from openalex import search_openalex, search_openalex_authors, search_openalex_concepts, search_openalex_institutions, search_openalex_sources
+from openalex import search_openalex, search_openalex_authors, search_openalex_topics, search_openalex_institutions, search_openalex_sources
 
 server = Server("codesearch", instructions="""# CodeSearch MCP
 
@@ -99,7 +99,7 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `synthesize=true`: get a Groq-summarized answer (default off for search_all/searchcode/code tools)
+- `synthesize=true`: get a Groq-summarized answer (default on for search_all; off for searchcode/code tools). Set `synthesize=false` for raw results
 """)
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -167,6 +167,11 @@ async def handle_list_tools() -> list[Tool]:
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
                     "count": {"type": "integer", "default": 10, "description": "Results per source (max 50)"},
+                    "fields_of_study": {"type": "string", "description": "S2 papers domain filter (default: all fields)"},
+                    "so_sort": {"type": "string", "default": "votes", "description": "Stack Exchange sort: votes/activity/creation/relevance"},
+                    "fromdate": {"type": "string", "description": "Stack Exchange results older than ISO date"},
+                    "todate": {"type": "string", "description": "Stack Exchange results newer than ISO date"},
+                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations"},
                 },
                 "required": ["query"],
             },
@@ -813,7 +818,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             action = str(arguments.get("action", "search"))
             if action == "search":
                 query = str(arguments.get("query", ""))
-                library = str(arguments.get("library", "") or query.split()[0])
+                library = str(arguments.get("library", "") or (query.split()[0] if query.strip() else ""))
                 version = str(arguments.get("version", ""))
                 fast = bool(arguments.get("fast", False))
                 library_id = str(arguments.get("library_id", ""))
@@ -910,7 +915,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             if action == "authors":
                 r = await search_openalex_authors(query, cnt)
             elif action == "topics":
-                r = await search_openalex_concepts(query, cnt)
+                r = await search_openalex_topics(query, cnt)
             elif action == "institutions":
                 r = await search_openalex_institutions(query, cnt)
             elif action == "sources":
@@ -928,6 +933,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             language = str(arguments.get("language", ""))
             cnt = min(max(safe_int(arguments.get("count", 10)), 1), 50)
             lib = library or (query.split()[0] if query.strip() else "")
+            fields_of_study = str(arguments.get("fields_of_study", "")).strip()
 
             expanded = await expand_code_query(query)
             code_q = expanded[1] if len(expanded) > 1 else query
@@ -935,8 +941,9 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks = []
             task_names = []
 
-            tasks.append(context7_resolve(lib, version=version))
-            task_names.append("context7")
+            if lib.strip():
+                tasks.append(context7_resolve(lib, version=version))
+                task_names.append("context7")
 
             if GH_TOKEN:
                 tasks.append(search_github(query, "code", cnt, owner, repo, language))
@@ -949,8 +956,12 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(codewiki_search_repos(query, cnt // 3 + 1))
             task_names.append("codewiki")
 
-            _so_tags_t = " ".join(_SE_TAGS.findall(query))
-            tasks.append(search_so(query, cnt // 3 + 1, tags=_so_tags_t, sort="votes"))
+            _so_tags_t = ";".join(_SE_TAGS.findall(query))
+            _so_sort = str(arguments.get("so_sort", "votes"))
+            _so_from = str(arguments.get("fromdate", ""))
+            _so_to = str(arguments.get("todate", ""))
+            tasks.append(search_so(query, cnt // 3 + 1, tags=_so_tags_t, sort=_so_sort,
+                                   fromdate=_so_from, todate=_so_to))
             task_names.append("so")
 
             if SOFA_KEY:
@@ -976,12 +987,11 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             tasks.append(devdocs_search(lib, query) if lib else devdocs_list_docs())
             task_names.append("devdocs")
 
-            tasks.append(search_papers(query, cnt, fields_of_study="Computer Science"))
+            tasks.append(search_papers(query, cnt, fields_of_study=fields_of_study or None))
             task_names.append("s2_papers")
 
             if CORE_API_AVAILABLE:
-                core_q = f"{query} language.code:en"
-                tasks.append(search_core_works(core_q, cnt))
+                tasks.append(search_core_works(query, cnt))
                 task_names.append("core_papers")
 
             tasks.append(tavily_search(code_q, cnt, include_domains=["github.com", "docs.*", "dev.to", "stackoverflow.com"]))
@@ -1080,15 +1090,15 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 elif name_ == "libraries_io":
                     merged["libraries_io"] = result["results"]
                     for lr in (result.get("results", []) or []):
-                        flat_items.append({"source": "libraries_io", "title": lr.get("name", ""), "text": lr.get("description", ""), "url": ""})
+                        flat_items.append({"source": "libraries_io", "title": lr.get("name", ""), "text": lr.get("description", ""), "url": lr.get("url", "")})
                 elif name_ == "npm":
                     merged["npm"] = result["results"]
                     for nr in (result.get("results", []) or []):
-                        flat_items.append({"source": "npm", "title": nr.get("name", ""), "text": nr.get("description", ""), "url": ""})
+                        flat_items.append({"source": "npm", "title": nr.get("name", ""), "text": nr.get("description", ""), "url": nr.get("links", {}).get("npm", "")})
                 elif name_ == "crates":
                     merged["crates"] = result["results"]
                     for cr in (result.get("results", []) or []):
-                        flat_items.append({"source": "crates", "title": cr.get("name", ""), "text": cr.get("description", ""), "url": ""})
+                        flat_items.append({"source": "crates", "title": cr.get("name", ""), "text": cr.get("description", ""), "url": cr.get("homepage", "") or cr.get("repository", "")})
                 elif name_ == "devdocs":
                     merged["devdocs"] = result.get("results", [])
                 elif name_ == "s2_papers":
@@ -1127,7 +1137,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
                 except Exception as e:
                     logger.warning("reranker failed: %s", e)
 
-            if merged.get("deduped_results"):
+            if merged.get("deduped_results") and bool(arguments.get("synthesize", True)):
                 try:
                     top = merged["deduped_results"][:3]
                     ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
@@ -1254,8 +1264,10 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
         elif name == "searchcode":
             action = str(arguments.get("action", ""))
             repo = str(arguments.get("repository", ""))
-            # Accept owner/repo shorthand
-            if repo and not repo.startswith("http") and "/" in repo and not repo.startswith(("gh:", "github:")):
+            # Accept owner/repo shorthand; strip gh:/github: prefixes
+            if repo.startswith(("gh:", "github:")):
+                repo = repo.split(":", 1)[1]
+            if repo and not repo.startswith("http") and "/" in repo:
                 repo = f"https://github.com/{repo}"
             if not repo:
                 return _res({"error": "repository is required for searchcode"}, False)

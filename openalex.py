@@ -105,7 +105,7 @@ async def search_openalex_authors(query: str, count: int = 10) -> dict:
     }
 
 
-async def search_openalex_concepts(query: str, count: int = 10) -> dict:
+async def search_openalex_topics(query: str, count: int = 10) -> dict:
     """Search OpenAlex for research topics (4-level hierarchy: Domain→Field→Subfield→Topic)."""
     r = await _openalex_get("topics", {
         "search": query,

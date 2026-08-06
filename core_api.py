@@ -41,11 +41,7 @@ async def search_core_works(query: str, limit: int = 10, offset: int = 0) -> dic
         if CORE_API_KEY:
             headers["Authorization"] = f"Bearer {CORE_API_KEY}"
         c = get_http_client()
-        r = await c.get(CORE_SEARCH_WORKS, params=params, headers=headers, timeout=15)
-        if r.status_code == 301:
-            follow_url = r.headers.get("location", "")
-            if follow_url:
-                r = await c.get(follow_url, headers=headers, timeout=15)
+        r = await c.get(CORE_SEARCH_WORKS, params=params, headers=headers, timeout=15, follow_redirects=True)
         if r.status_code != 200:
             return {"success": False, "error": api_error("CORE API", r), "results": []}
         data = r.json()
