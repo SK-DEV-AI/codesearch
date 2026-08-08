@@ -12,7 +12,7 @@ logger = logging.getLogger("codesearch")
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator, api_error
 
@@ -72,7 +72,7 @@ from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
     list_package_files, read_package_file, resolve_package)
 from openalex import search_openalex, search_openalex_authors, search_openalex_topics, search_openalex_institutions, search_openalex_sources
 
-server = Server("codesearch", instructions="""# CodeSearch MCP
+INSTRUCTIONS = """# CodeSearch MCP
 
 Code search, package analysis, documentation, vulnerability scanning.
 
@@ -100,7 +100,7 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
 - `synthesize=true`: get a Groq-summarized answer (default on for search_all; off for searchcode/code tools). Set `synthesize=false` for raw results
-""")
+"""
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
 _LI_PLATFORM = re.compile(r"(?i)\b(python|javascript|typescript|rust|golang?|java|ruby|php|swift|kotlin|lua|c\+\+|csharp|dart|elixir|haskell|scala|perl|r)\b")
@@ -124,9 +124,8 @@ def safe_float(v, default=0.0):
         return default
 
 
-@server.list_tools()
-async def handle_list_tools() -> list[Tool]:
-    return [
+async def handle_list_tools(ctx, params) -> ListToolsResult:
+    return ListToolsResult(tools=[
         Tool(
             name="ping",
             description="Lightweight connectivity check — verifies internet and key API endpoints are reachable. Use before expensive calls when connectivity is uncertain. No params needed. e.g. ping()",
@@ -493,11 +492,12 @@ async def handle_list_tools() -> list[Tool]:
                 },
             },
         ),
-    ]
+    ])
 
 
-@server.call_tool()
-async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
+async def handle_call_tool(ctx, params) -> CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
     if not isinstance(arguments, dict):
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps({"error": "arguments must be a dict"}))],
@@ -518,7 +518,7 @@ async def handle_call_tool(name: str, arguments: dict) -> CallToolResult:
             for target, url in [("cloudflare", "https://1.1.1.1"), ("google", "https://www.google.com"), ("github", "https://api.github.com")]:
                 try:
                     r = await c.get(url, timeout=5)
-                    results[target] = {"reachable": True, "status": r.status_code, "ms": int(r.elapsed * 1000) if hasattr(r, 'elapsed') else None}
+                    results[target] = {"reachable": True, "status": r.status_code, "ms": int(r.elapsed.total_seconds() * 1000) if hasattr(r, 'elapsed') else None}
                 except Exception as e:
                     results[target] = {"reachable": False, "error": str(e)[:60]}
             return _res({"success": True, "connectivity": results})
@@ -1409,6 +1409,12 @@ async def _warmup_reranker():
         await warmup()
     except Exception:
         pass
+
+
+server = Server("codesearch", instructions=INSTRUCTIONS,
+    on_list_tools=handle_list_tools,
+    on_call_tool=handle_call_tool,
+)
 
 
 async def main():
