@@ -129,7 +129,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="ping",
             description="Lightweight connectivity check — verifies internet and key API endpoints are reachable. Use before expensive calls when connectivity is uncertain. No params needed. e.g. ping()",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {},
             },
@@ -137,7 +137,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="wiki",
             description="Repo architecture and wiki via DeepWiki + CodeWiki. For single-repo queries use owner+repo; for multi-repo questions pass repos (array of owner/repo strings, max 10). e.g. wiki(owner='torvalds', repo='linux', question='How does the scheduler work?')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["search", "fetch", "ask", "architecture"]},
@@ -156,7 +156,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="search_all",
             description="Unified search across 14+ sources with embedding dedup and reranking. e.g. search_all(query='rust async runtime', language='rust')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
@@ -178,7 +178,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="openalex",
             description="Search OpenAlex academic research database — papers, authors, institutions, and research topics. Free, no API key needed. e.g. openalex(query='transformer attention', action='works')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
@@ -191,7 +191,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="search_package",
             description="Raw package registry queries (npm/PyPI/crates + deps.dev). Use for fast single-source lookups. For composite intelligence (Libraries.io + Sonatype vulns), use `pkg` instead. e.g. search_package(name='express', registry='npm')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
@@ -208,7 +208,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="so_search",
             description="Stack Overflow: Stack Exchange API (free, 300 req/min, resolved/accepted answers with score/tags) or SOFA (Stack Overflow for Agents, beta, agent-contributed content with trust scores, requires SOFA_KEY env). Use stackexchange for authoritative resolved answers, sofa for fresher agent-contributed content. e.g. so_search(query='python async', tags='python', accepted=true)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["stackexchange", "sofa", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers", "users"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/min, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY). questions_by_ids/search_users/search_tags/question_comments/questions/answers/users are Stack Exchange sub-actions"},
@@ -236,7 +236,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="hn",
             description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show). e.g. hn(query='rust', tags='story', min_points=50)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["search","item","stories","user"]},
@@ -256,7 +256,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="search_libraries",
             description="Libraries.io dependency metadata and source rank. e.g. search_libraries(name='lodash', platform='npm')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
@@ -277,7 +277,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="vulns",
             description="Sonatype Guide: scan packages, vulnerability details, latest version, search, license analysis, or quick report by PURL. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "search", "license", "quick_report"]},
@@ -296,7 +296,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="docs",
             description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content. e.g. docs(query='authentication', library='express')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["search", "devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "devdocs_toc", "context7_add_repo", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"], "default": "search"},
@@ -316,7 +316,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="papers",
             description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "arxiv_search", "author_by_id", "bulk_search", "recommendations_negatives"]},
@@ -337,7 +337,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="searchcode",
             description="Per-repo code intelligence via SearchCode (free, no auth). Use analyze for instant repo overview (languages, complexity, tech stack, credentials), search for searching code within a repo, findings for code quality issues, file_tree to list files, or get_file to read a file. No rate limits. e.g. searchcode(action='analyze', repository='https://github.com/expressjs/express')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["analyze", "search", "findings", "file_tree", "get_file"], "description": "analyze=repo overview, search=search code, findings=quality issues, file_tree=list files, get_file=read file"},
@@ -360,7 +360,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="code_search",
             description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by PkgSeer. e.g. code_search(query='handleAuth', target='npm:express')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query supporting implicit AND, OR, parens, -exclude, and qualifiers (kind:, lang:, path:)"},
@@ -375,7 +375,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="code_files",
             description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: 3-5x faster, no auth). e.g. code_files(spec='npm:express')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express, pypi:requests)"},
@@ -387,7 +387,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="code_read",
             description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: CDN-served, no auth). e.g. code_read(spec='npm:express', path='src/index.js')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
@@ -399,7 +399,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="code_grep",
             description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by PkgSeer. e.g. code_grep(spec='npm:express', pattern='handleAuth')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
@@ -412,7 +412,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="pkg_deps",
             description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by PkgSeer. e.g. pkg_deps(spec='npm:express')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
@@ -423,7 +423,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="pkg",
             description="Package intelligence: info (composite metadata — Libraries.io + Sonatype + PkgSeer), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). For raw single-source registry queries (npm versions, crates categories), use `search_package` instead. e.g. pkg(name='express', action='info')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["info", "changelog", "upgrade_review", "files", "read"], "default": "info"},
@@ -443,7 +443,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="enrich",
             description="Fetch full content for a list of search results, deduplicate, and rerank by relevance. Give it results from any search tool plus the original query. e.g. enrich(query='rust async', results=[{'url':'...','title':'...'}])",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
@@ -471,7 +471,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="analyze",
             description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Accepts GitHub URLs or owner/repo strings. May take 10-15s (parallel API calls). e.g. analyze(repository='sst/opencode')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "repository": {"type": "string", "description": "GitHub repo: URL (https://github.com/owner/repo) or owner/repo string"},
@@ -482,7 +482,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         Tool(
             name="trending",
             description="Discover trending/hot repositories. Wraps GitHub search with sort=stars and auto-computed date filters. e.g. trending(since='weekly', language='python')",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "source": {"type": "string", "enum": ["github"], "default": "github", "description": "Platform to find trending items (github for now)"},
@@ -501,13 +501,13 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
     if not isinstance(arguments, dict):
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps({"error": "arguments must be a dict"}))],
-            isError=True,
+            is_error=True,
         )
 
     def _res(data, ok=True):
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(data, default=str))],
-            isError=not ok,
+            is_error=not ok,
         )
 
     try:
@@ -1009,6 +1009,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 done, pending = await asyncio.wait(wrapped, timeout=dl)
                 for p in pending:
                     p.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
                 res = {}
                 for n, w in zip(names, wrapped):
                     if w in done:

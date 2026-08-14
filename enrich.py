@@ -5,7 +5,7 @@ import asyncio
 from config import get_http_client, api_error
 from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank, fallback_sort
-from security import SecurityError, validate_url as _validate_url
+from security import SecurityError, safe_fetch, validate_url as _validate_url
 
 
 async def enrich_results(
@@ -21,7 +21,7 @@ async def enrich_results(
 
     fetcher = get_http_client()
     sem = asyncio.Semaphore(8)
-    deadline = asyncio.get_event_loop().time() + 20
+    deadline = asyncio.get_running_loop().time() + 20
 
     async def _fetch_one(r: dict) -> dict:
         url = str(r.get("url", ""))
@@ -35,11 +35,11 @@ async def enrich_results(
             r["__fetch_error"] = str(e)
             return r
         async with sem:
-            if asyncio.get_event_loop().time() > deadline:
+            if asyncio.get_running_loop().time() > deadline:
                 r["__fetch_error"] = "deadline"
                 return r
             try:
-                resp = await fetcher.get(url, timeout=10, follow_redirects=True)
+                resp = await safe_fetch(fetcher, url, timeout=10)
                 if resp.status_code == 200:
                     text = resp.text
                     r["full_content"] = text[:100000]

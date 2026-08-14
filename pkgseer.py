@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from config import GITHITS_API_TOKEN, api_error, get_http_client
+from security import safe_fetch
 
 _PKGSEER_URL = "https://pkgseer.dev"
 _JSDELIVR_API = "https://data.jsdelivr.com/v1"
@@ -259,7 +260,7 @@ async def jsdelivr_read_file(spec: str, file_path: str) -> dict[str, Any]:
     file_path_clean = file_path if file_path.startswith("/") else f"/{file_path}"
     url = f"https://cdn.jsdelivr.net/npm/{pkg_name}{ver_part}{file_path_clean}"
     try:
-        r = await get_http_client().get(url, follow_redirects=True)
+        r = await safe_fetch(get_http_client(), url)
     except httpx.RequestError as e:
         return {"success": False, "error": f"jsDelivr CDN request failed: {e}"}
     if r.status_code != 200:
