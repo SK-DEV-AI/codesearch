@@ -4,7 +4,7 @@ import asyncio
 
 from config import get_http_client, api_error
 from embed import _embed, _dedup_rank, _hybrid_rank
-from reranker import rerank as _rerank, fallback_sort
+from reranker import rerank as _rerank, fallback_sort, killswitch_active
 from security import SecurityError, safe_fetch, validate_url as _validate_url
 
 
@@ -98,7 +98,7 @@ async def enrich_results(
             entry["relevance_score"] = round(score, 4)
         result_list.append(entry)
 
-    return {
+    result: dict = {
         "success": True,
         "total_input": len(results),
         "total_enriched": len(result_list),
@@ -106,3 +106,7 @@ async def enrich_results(
         "total_errors": sum(1 for r in fetched if r.get("__fetch_error")),
         "enriched": result_list,
     }
+    if killswitch_active():
+        result["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
+            "Enable with: rm ~/.local/share/reranker-rust/disabled"
+    return result

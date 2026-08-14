@@ -65,7 +65,7 @@ from semantic_scholar import (search_papers, get_paper_details,
     s2_recommendations_with_negatives)
 from core_api import search_core_works, CORE_API_AVAILABLE
 from depsdev import get_resolved_dependencies, get_package_info as get_depsdev_package_info, get_advisory, query_by_hash
-from reranker import rerank as _rerank
+from reranker import rerank as _rerank, killswitch_active
 from tavily_search import tavily_search
 from enrich import enrich_results
 from pkg_utils import (get_pkg_changelog, get_pkg_upgrade_review,
@@ -1138,6 +1138,9 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=min(cnt * 2, 50))
                 except Exception as e:
                     logger.warning("reranker failed: %s", e)
+            if killswitch_active():
+                merged["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
+                    "Enable with: rm ~/.local/share/reranker-rust/disabled"
 
             if merged.get("deduped_results") and bool(arguments.get("synthesize", True)):
                 try:

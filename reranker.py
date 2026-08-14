@@ -3,10 +3,18 @@
 import asyncio
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 _SOCKET_PATH = "/tmp/reranker_worker.sock"
+_RERANKER_KILLSWITCH = os.path.expanduser("~/.local/share/reranker-rust/disabled")
+
+
+def killswitch_active() -> bool:
+    """True when the reranker killswitch file exists — reranking is off (frees
+    GPU VRAM). Enable with: rm ~/.local/share/reranker-rust/disabled"""
+    return os.path.exists(_RERANKER_KILLSWITCH)
 
 _LOCK = asyncio.Lock()
 _READER = None
@@ -57,6 +65,8 @@ async def _ensure_worker():
 
 
 async def warmup() -> bool:
+    if killswitch_active():
+        return False
     async with _LOCK:
         global _READER, _WRITER
         if await _is_healthy():
@@ -88,6 +98,8 @@ def fallback_sort(passages: list[dict], top_k: int) -> list[dict]:
 async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict]:
     if not passages:
         return []
+    if killswitch_active():
+        return fallback_sort(passages, top_k)
     async with _LOCK:
         global _READER, _WRITER
         if not await _is_healthy() and not await _ensure_worker():
