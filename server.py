@@ -1408,14 +1408,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
         return _res({"error": f"handler interrupted: {type(e).__name__}"}, False)
 
 
-async def _warmup_reranker():
-    try:
-        from reranker import warmup
-        await warmup()
-    except Exception:
-        pass
-
-
 server = Server("codesearch", instructions=INSTRUCTIONS,
     on_list_tools=handle_list_tools,
     on_call_tool=handle_call_tool,
@@ -1423,8 +1415,6 @@ server = Server("codesearch", instructions=INSTRUCTIONS,
 
 
 async def main():
-    global _warmup_task
-    _warmup_task = asyncio.create_task(_warmup_reranker())
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
