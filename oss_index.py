@@ -26,7 +26,7 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
     cache_key = f"oss:{','.join(purls)}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "reports": cached, "cached": True}
     try:
         c = get_http_client()
         r = await c.post(OSS_API, json={"coordinates": purls},
@@ -73,7 +73,7 @@ async def get_vulnerability_detail(vuln_id: str) -> dict:
     cache_key = f"vuln:{vuln_id}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "vulnerability": cached, "cached": True}
     try:
         c = get_http_client()
         r = await c.get(f"{GUIDE_API}/vulnerabilities/{vuln_id}",
@@ -110,7 +110,7 @@ async def get_component_latest_version(purl: str) -> dict:
     cache_key = f"latest:{purl}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "result": cached, "cached": True}
     try:
         c = get_http_client()
         r = await c.post(f"{GUIDE_API}/components/latest-version",

@@ -33,7 +33,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
                         exclude_qualifier: str = "",
                         merged: str = "", head: str = "", base: str = "",
                         review: str = "") -> dict:
-    cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}:{page}:{exclude_qualifier}:{merged}:{head}:{base}:{review}:{in_qualifier}:{is_}:{pushed}:{stars}:{forks}:{topics}:{labels}:{size}"
+    cache_key = f"gh:{search_type}:{q}:{owner}:{repo}:{count}:{sort}:{order}:{filename}:{extension}:{path}:{created}:{state}:{user}:{org}:{page}:{exclude_qualifier}:{merged}:{head}:{base}:{review}:{in_qualifier}:{is_}:{pushed}:{stars}:{forks}:{topics}:{labels}:{size}:{language}"
     cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}
@@ -104,6 +104,9 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
             params["order"] = order
         mt = "github.v3.text-match+json" if search_type == "code" else "github+json"
         r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
+        if r.status_code in (401, 403):
+            # Bad/expired key: the retry's _gh_headers call advances to the next key
+            r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
         remaining = r.headers.get("x-ratelimit-remaining")
         if remaining is not None:
             try:

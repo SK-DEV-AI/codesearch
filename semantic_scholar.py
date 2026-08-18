@@ -154,11 +154,12 @@ async def get_paper_citations(paper_id: str, limit: int = 20) -> dict:
         r = await _s2_get(f"{S2_PAPER}/{paper_id}/citations", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 citations: {r.status_code} {r.text[:200]}"}
+        data = r.json()
         cites = []
-        for item in (r.json().get("data", []) or [])[:limit]:
+        for item in (data.get("data", []) or [])[:limit]:
             p = item.get("citingPaper", {}) or {}
             cites.append(_extract_paper(p))
-        return {"success": True, "citations": cites, "total": r.json().get("total", len(cites))}
+        return {"success": True, "citations": cites, "total": data.get("total", len(cites))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
 
@@ -169,11 +170,12 @@ async def get_paper_references(paper_id: str, limit: int = 20) -> dict:
         r = await _s2_get(f"{S2_PAPER}/{paper_id}/references", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 references: {r.status_code} {r.text[:200]}"}
+        data = r.json()
         refs = []
-        for item in (r.json().get("data", []) or [])[:limit]:
+        for item in (data.get("data", []) or [])[:limit]:
             p = item.get("citedPaper", {}) or {}
             refs.append(_extract_paper(p))
-        return {"success": True, "references": refs, "total": r.json().get("total", len(refs))}
+        return {"success": True, "references": refs, "total": data.get("total", len(refs))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
         return {"success": False, "error": str(e)}
 

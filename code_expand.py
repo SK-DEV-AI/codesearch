@@ -49,7 +49,6 @@ async def expand_code_query(query: str) -> list[str]:
     )
 
     try:
-        import httpx
         c = get_http_client()
         r = await c.post(
             "https://api.groq.com/openai/v1/chat/completions",

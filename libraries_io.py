@@ -11,11 +11,11 @@ from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_c
 async def search_libraries_io(name: str, platform: str = "") -> dict:
     if not LI_KEY:
         return {"success": False, "error": "LI_KEY not configured"}
-    li_key = await _next_li_key()
     cache_key = f"li:{name}:{platform}"
     cached = await _cached(cache_key)
     if cached is not None:
         return cached
+    li_key = await _next_li_key()
     try:
         platforms = [platform] if platform else ["npm", "pypi", "cargo"]
         results = {}

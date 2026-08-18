@@ -49,6 +49,8 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                         await _set_cache(f"emb:{input_type}:{hashlib.sha256(uncached[idx].encode()).hexdigest()}", emb)
         except (httpx.HTTPError, ValueError, KeyError) as e:
             logger.warning("embed failed: %s", e)
+    if not any(e is not None for e in results):
+        return None
     return results
 
 

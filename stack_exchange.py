@@ -53,7 +53,7 @@ async def search_so(query: str, count: int = 5, tags: str = "",
     cache_key = f"so:{query}:{tags}:{count}:{accepted}:{fromdate}:{todate}:{closed}:{sort}:{views}:{answers}:{type}:{site}:{filter}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "results": cached, "cached": True}
     try:
         params: dict[str, Any] = {
             "order": "desc", "sort": sort, "q": query,

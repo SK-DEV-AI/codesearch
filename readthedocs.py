@@ -14,7 +14,7 @@ async def search_readthedocs(project: str, query: str, version: str = "",
     cache_key = f"rtd:{project}:{query}:{version}:{page}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "results": cached, "cached": True}
     try:
         q = query
         if project and version:

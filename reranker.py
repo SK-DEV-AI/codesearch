@@ -40,28 +40,26 @@ async def _close_connection():
 
 
 async def _is_healthy() -> bool:
-    """Quick ping to check if the existing worker socket is alive."""
+    """Stat-based health check — no wire ping, so a busy worker (40-120s
+    rerank) never stalls other agents' checks or queues stale ping lines."""
     global _WRITER, _READER
-    if _WRITER is None or _READER is None:
-        return False
-    try:
-        req = json.dumps({"query": "ping", "passages": [{"snippet": ""}], "top_k": 1})
-        _WRITER.write((req + "\n").encode())
-        await asyncio.wait_for(_WRITER.drain(), timeout=2)
-        r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=5)
-        return not json.loads(r).get("error")
-    except Exception:
-        return False
+    return (
+        _WRITER is not None
+        and _READER is not None
+        and os.path.exists(_SOCKET_PATH)
+    )
 
 
 async def _ensure_worker():
     global _READER, _WRITER
     await _close_connection()
-    try:
-        _READER, _WRITER = await asyncio.open_unix_connection(_SOCKET_PATH)
-        return True
-    except (FileNotFoundError, ConnectionRefusedError, OSError):
-        return False
+    for _ in range(50):
+        try:
+            _READER, _WRITER = await asyncio.open_unix_connection(_SOCKET_PATH, limit=2**20)
+            return True
+        except (FileNotFoundError, ConnectionRefusedError, OSError):
+            await asyncio.sleep(0.1)
+    return False
 
 
 async def warmup() -> bool:
@@ -107,8 +105,8 @@ async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict
         normalized = []
         for p in passages:
             item = dict(p)
-            text = item.get("snippet") or item.get("text") or item.get("content") or ""
-            item["snippet"] = text[:3072]
+            text = item.get("snippet") or item.get("text") or item.get("content") or item.get("full_content") or ""
+            item["snippet"] = text[:32768]
             normalized.append(item)
         req = json.dumps({"query": query, "passages": normalized, "top_k": top_k})
         try:
@@ -119,7 +117,7 @@ async def rerank(query: str, passages: list[dict], top_k: int = 20) -> list[dict
             await _close_connection()
             return fallback_sort(passages, top_k)
         try:
-            r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=30)
+            r = await asyncio.wait_for(_READER.readuntil(b"\n"), timeout=120)
         except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.TimeoutError) as e:
             logger.warning(f"reranker: read failed: {e}")
             await _close_connection()

@@ -18,7 +18,7 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
     cache_key = f"hn:{query}:{count}:{sort_by_date}:{tags}:{min_points}:{min_comments}:{before}:{after}:{page}"
     cached = await _cached(cache_key)
     if cached is not None:
-        return cached
+        return {"success": True, "results": cached, "cached": True}
     try:
         endpoint = f"{HN_ALGOLIA}/search_by_date" if sort_by_date else f"{HN_ALGOLIA}/search"
         filters = []

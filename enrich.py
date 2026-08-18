@@ -41,10 +41,7 @@ async def enrich_results(
             try:
                 resp = await safe_fetch(fetcher, url, timeout=10)
                 if resp.status_code == 200:
-                    text = resp.text
-                    r["full_content"] = text[:100000]
-                    if not include_html:
-                        r["full_content"] = text[:50000]
+                    r["full_content"] = resp.text[:100000 if include_html else 50000]
                 else:
                     r["__fetch_error"] = api_error("", resp)
             except Exception as e:
@@ -93,7 +90,7 @@ async def enrich_results(
         fetch_err = r.get("__fetch_error")
         if fetch_err:
             entry["fetch_error"] = fetch_err
-        score = r.get("_relevance") or r.get("_hybrid")
+        score = r.get("_rerank") or r.get("_relevance") or r.get("_hybrid")
         if score:
             entry["relevance_score"] = round(score, 4)
         result_list.append(entry)

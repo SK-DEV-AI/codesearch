@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import httpx
 
 from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client, api_error
 
 _session_id: str | None = None
+_session_lock = asyncio.Lock()
 
 
 async def _get_session() -> str | None:
@@ -13,17 +15,20 @@ async def _get_session() -> str | None:
         return None
     if _session_id:
         return _session_id
-    c = get_http_client()
-    r = await c.post(f"{SOFA_BASE}/sessions", headers={
-        "Authorization": f"Bearer {SOFA_KEY}",
-        "X-Sofa-Client-Name": "mcp-codesearch",
-        "X-Sofa-Model-Name": NV_EMBED_MODEL,
-    })
-    if r.status_code != 201:
-        _session_id = None
-        return None
-    _session_id = r.json()["session_id"]
-    return _session_id
+    async with _session_lock:
+        if _session_id:
+            return _session_id
+        c = get_http_client()
+        r = await c.post(f"{SOFA_BASE}/sessions", headers={
+            "Authorization": f"Bearer {SOFA_KEY}",
+            "X-Sofa-Client-Name": "mcp-codesearch",
+            "X-Sofa-Model-Name": NV_EMBED_MODEL,
+        })
+        if r.status_code != 201:
+            _session_id = None
+            return None
+        _session_id = r.json()["session_id"]
+        return _session_id
 
 
 async def search_sofa(query: str, count: int = 5, content_type: str = "question",

@@ -107,9 +107,6 @@ _LI_PLATFORM = re.compile(r"(?i)\b(python|javascript|typescript|rust|golang?|jav
 _LI_PLATFORM_MAP = {"python":"pypi","javascript":"npm","typescript":"npm","rust":"cargo","golang":"go","java":"maven","ruby":"rubygems","php":"packagist","swift":"swift","kotlin":"maven","csharp":"nuget","dart":"pub","elixir":"hex","haskell":"hackage","scala":"maven","perl":"cpan"}
 
 
-_warmup_task: asyncio.Task | None = None
-
-
 def safe_int(v, default=0):
     try:
         return int(v)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from typing import Any
 
@@ -9,16 +10,19 @@ import httpx
 
 # ── Shared HTTP Client Pool ──────────────────────────────────────────────────
 _http_client: httpx.AsyncClient | None = None
+_http_client_lock = threading.Lock()
 
 
 def get_http_client() -> httpx.AsyncClient:
     """Return a shared httpx.AsyncClient with connection pooling."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=30.0,
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-        )
+        with _http_client_lock:
+            if _http_client is None or _http_client.is_closed:
+                _http_client = httpx.AsyncClient(
+                    timeout=30.0,
+                    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+                )
     return _http_client
 
 
@@ -114,11 +118,17 @@ async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
     for attempt in range(retries + 1):
         try:
             if method == "GET":
-                return await c.get(url, timeout=timeout, **kwargs)
+                resp = await c.get(url, timeout=timeout, **kwargs)
             elif method == "POST":
-                return await c.post(url, timeout=timeout, **kwargs)
+                resp = await c.post(url, timeout=timeout, **kwargs)
             elif method == "PUT":
-                return await c.put(url, timeout=timeout, **kwargs)
+                resp = await c.put(url, timeout=timeout, **kwargs)
+            if resp.status_code >= 500 and attempt < retries:
+                last_err = httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}", request=resp.request, response=resp)
+                await asyncio.sleep(1 * (attempt + 1))
+                continue
+            return resp
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
             last_err = e
             if attempt < retries:

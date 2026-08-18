@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, _cached, _set_cache, get_http_client, api_error
+from config import CRATES_SEARCH, NPM_SEARCH, REGISTRIES, get_http_client, api_error
 
 NPM_DOWNLOADS = "https://api.npmjs.org/downloads/point/last-month"
 PYPI_STATS = "https://pypistats.org/api/packages"
