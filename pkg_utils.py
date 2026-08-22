@@ -299,8 +299,8 @@ async def get_pkg_upgrade_review(name: str, registry: str = "auto",
         tgt_task = asyncio.create_task(scan_vulnerabilities(registry, name, target_version))
         cur_vulns = await cur_task
         tgt_vulns = await tgt_task
-        cur_ids = {v["id"] for v in cur_vulns.get("reports", [{}])[0].get("vulnerabilities", [])} if cur_vulns.get("success") else set()
-        tgt_ids = {v["id"] for v in tgt_vulns.get("reports", [{}])[0].get("vulnerabilities", [])} if tgt_vulns.get("success") else set()
+        cur_ids = {v["id"] for v in ((cur_vulns.get("reports") or [{}])[0].get("vulnerabilities", []))} if cur_vulns.get("success") else set()
+        tgt_ids = {v["id"] for v in ((tgt_vulns.get("reports") or [{}])[0].get("vulnerabilities", []))} if tgt_vulns.get("success") else set()
         results["vulnerabilities"] = {
             "current_count": len(cur_ids), "target_count": len(tgt_ids),
             "fixed": list(cur_ids - tgt_ids),

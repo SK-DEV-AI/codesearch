@@ -244,6 +244,9 @@ async def gh_get_repo(owner: str, repo: str) -> dict:
             "created_at": d.get("created_at", ""), "updated_at": d.get("updated_at", ""),
             "archived": d.get("archived", False), "fork": d.get("fork", False),
             "default_branch": d.get("default_branch", ""),
+            "pushed_at": d.get("pushed_at", ""),
+            "size": d.get("size", 0),
+            "has_wiki": d.get("has_wiki", False),
         }
         await _set_cache(cache_key, result)
         return result
