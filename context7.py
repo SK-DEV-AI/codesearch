@@ -147,6 +147,8 @@ async def context7_resolve(query: str, version: str = "", fast: bool = False, li
 
 async def fetch_llms_txt(url: str) -> dict:
     try:
+        from security import validate_url
+        await validate_url(url)
         if not url.endswith("llms.txt"):
             url = url.rstrip("/") + "/llms.txt"
         c = get_http_client()
@@ -176,6 +178,8 @@ async def fetch_llms_txt(url: str) -> dict:
 
 async def fetch_doc_url(url: str) -> dict:
     try:
+        from security import validate_url
+        await validate_url(url)
         c = get_http_client()
         r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
