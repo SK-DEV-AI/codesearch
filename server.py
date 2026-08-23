@@ -322,6 +322,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
                     "author_id": {"type": "string"},
                     "count": {"type": "integer", "default": 10},
+                    "offset": {"type": "integer", "default": 0, "description": "Result offset for pagination (search and core_search actions)"},
                     "year": {"type": "string"},
                     "fields_of_study": {"type": "string"},
                     "open_access": {"type": "boolean"},
@@ -1014,12 +1015,12 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                         try:
                             res[n] = w.result()
                         except asyncio.CancelledError:
-                            logger.warning("gather: %s cancelled", n)
-                            continue
+                            # killed by our p.cancel() above — report, don't drop
+                            res[n] = TimeoutError(f"{n} cancelled at {dl}s deadline")
                         except Exception as e:
                             res[n] = e
                     else:
-                        res[n] = asyncio.TimeoutError(f"{n} exceeded deadline")
+                        res[n] = TimeoutError(f"{n} exceeded {dl}s deadline")
                 return res
 
             results = await _gather_with_deadline(tasks, task_names, 30)
@@ -1030,7 +1031,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     if isinstance(result, asyncio.TimeoutError):
                         source_availability[name_] = "timed_out"
                     else:
-                        source_availability[name_] = f"error: {type(result).__name__}"
+                        # include the message — bare type names hide root causes
+                        source_availability[name_] = f"error: {result}"
                 elif isinstance(result, dict) and result.get("success"):
                     source_availability[name_] = "success"
                 else:
@@ -1260,6 +1262,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     year=str(arguments.get("year", "")),
                     fields_of_study=str(arguments.get("fields_of_study", "")),
                     open_access=bool(arguments.get("open_access", False)),
+                    offset=int(arguments.get("offset", 0)),
                 )
             return _res(r, r.get("success", False))
 
