@@ -372,7 +372,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="code_files",
-            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: 3-5x faster, no auth). e.g. code_files(spec='npm:express')",
+            description="List files in an indexed dependency by package-scoped path (e.g. npm:express/src/). PkgSeer + jsDelivr; indexes npm/pypi/crates ONLY (github: specs rejected). e.g. code_files(spec='npm:express')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -384,7 +384,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="code_read",
-            description="Read a file from an indexed dependency by package-scoped path. No GitHub URL needed. PkgSeer + jsDelivr (npm is jsDelivr-backed: CDN-served, no auth). e.g. code_read(spec='npm:express', path='src/index.js')",
+            description="Read a file from an indexed dependency by package-scoped path. PkgSeer + jsDelivr; indexes npm/pypi/crates ONLY (github: specs rejected). e.g. code_read(spec='npm:express', path='src/index.js')",
             input_schema={
                 "type": "object",
                 "properties": {

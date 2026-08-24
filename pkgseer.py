@@ -85,7 +85,10 @@ def _parse_spec(spec: str) -> dict[str, str]:
     if "@" in package_name and not package_name.startswith("@"):
         package_name, version = package_name.rsplit("@", 1)
     registry_map = {"npm": "NPM", "pypi": "PYPI", "crates": "CRATESIO"}
-    registry = registry_map.get(registry.lower(), registry.upper())
+    reg = registry_map.get(registry.lower())
+    if reg is None:
+        return {"error": f"PkgSeer indexes npm/pypi/crates only — '{registry}:' specs are not supported. For GitHub repos use the searchcode tools (repository=URL) or codesearch_analyze."}
+    registry = reg
     result = {"registry": registry, "name": package_name, "packageName": package_name}
     if version:
         result["version"] = version
@@ -106,6 +109,8 @@ async def search(query: str, target: str = "", source: str = "",
     targets = [{"name": query}]
     if target:
         parts = _parse_spec(target)
+        if "error" in parts:
+            return {"success": False, "error": parts["error"]}
         targets = [{"name": parts["name"], "registry": parts["registry"]}]
     variables = {
         "targets": targets,
@@ -133,6 +138,8 @@ async def code_files(spec: str, path_prefix: str = "") -> dict[str, Any]:
     if err:
         return err
     pkg = _parse_spec(spec)
+    if "error" in pkg:
+        return {"success": False, "error": pkg["error"]}
     variables = {**pkg, "pathPrefix": path_prefix or None, "limit": 200, "waitTimeoutMs": 30000}
     result = await _pkgseer_graphql(LIST_FILES_QUERY, variables, timeout=30)
     if not result.get("success"):
@@ -150,6 +157,8 @@ async def code_read(spec: str, path: str) -> dict[str, Any]:
     if err:
         return err
     pkg = _parse_spec(spec)
+    if "error" in pkg:
+        return {"success": False, "error": pkg["error"]}
     variables = {**pkg, "filePath": path, "startLine": None, "endLine": None, "waitTimeoutMs": 30000}
     result = await _pkgseer_graphql(FETCH_CODE_CONTEXT_QUERY, variables, timeout=30)
     if not result.get("success"):
@@ -167,6 +176,8 @@ async def code_grep(spec: str, pattern: str, path_prefix: str = "") -> dict[str,
     if err:
         return err
     pkg = _parse_spec(spec)
+    if "error" in pkg:
+        return {"success": False, "error": pkg["error"]}
     path_selectors = [{"kind": "PREFIX", "value": path_prefix}] if path_prefix else None
     variables = {
         **pkg, "pattern": pattern, "patternType": "LITERAL",
@@ -191,6 +202,8 @@ async def pkg_deps(spec: str) -> dict[str, Any]:
     if err:
         return err
     pkg = _parse_spec(spec)
+    if "error" in pkg:
+        return {"success": False, "error": pkg["error"]}
     variables = {**pkg, "includeTransitive": True, "maxDepth": 5}
     result = await _pkgseer_graphql(PKG_DEPS_QUERY, variables, timeout=60)
     if not result.get("success"):
