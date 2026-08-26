@@ -146,12 +146,14 @@ async def analyze_repo(repository: str) -> dict:
     if isinstance(sc_res, dict) and sc_res.get("success"):
         sc_data = sc_res.get("data", sc_res.get("results", {}))
         if isinstance(sc_data, dict):
+            ov = sc_data.get("overview") or {}
+            sec = sc_data.get("security_summary") or {}
             output["code_quality"] = {
-                "total_lines": sc_data.get("total_lines", 0),
+                "total_lines": ov.get("total_lines", 0),
                 "languages": sc_data.get("languages", []),
                 "tech_stack": sc_data.get("tech_stack", {}),
-                "credentials_found": sc_data.get("credentials", False),
-                "file_count": sc_data.get("file_count", 0),
+                "credentials_found": bool(sec.get("total_findings", 0) or sec.get("findings")),
+                "file_count": ov.get("total_files", 0),
             }
         else:
             output["code_quality"] = {"summary": str(sc_data)[:500]}

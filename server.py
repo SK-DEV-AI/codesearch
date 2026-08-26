@@ -247,7 +247,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "firebase_type": {"type": "string"},
                     "username": {"type": "string"},
                 },
-                "required": [],
+                "required": ["action"],
             },
         ),
         Tool(
@@ -268,12 +268,13 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
                     "keyword": {"type": "string", "description": "Keyword for keywords action"},
+                    "count": {"type": "integer", "default": 10},
                 },
             },
         ),
         Tool(
             name="vulns",
-            description="Sonatype Guide: scan packages, vulnerability details, latest version, search, license analysis, or quick report by PURL. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
+            description="Sonatype Guide: scan packages, vulnerability details, latest version, or license analysis by PURL. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -284,8 +285,6 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "coordinates": {"type": "string"},
                     "vuln_id": {"type": "string"},
                     "purl": {"type": "string"},
-                    "keyword": {"type": "string"},
-                    "limit": {"type": "integer", "default": 10},
                 },
                 "required": [],
             },
@@ -353,6 +352,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "start_line": {"type": "integer", "default": 1, "description": "Start line (for get_file without symbol_name)"},
                     "end_line": {"type": "integer", "description": "End line (for get_file without symbol_name)"},
                 },
+                "required": ["action"],
             },
         ),
         Tool(
@@ -579,6 +579,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             pkg_name = str(arguments.get("name", ""))
             if action_type == "npm_get_version":
                 r = await npm_get_version(name=pkg_name, version=str(arguments.get("version","")))
+            elif action_type == "pypi_versions":
+                r = await get_pypi_versions(name=pkg_name)
             elif action_type == "crates_get_version":
                 r = await crates_get_version(name=pkg_name, version=str(arguments.get("version","")))
             elif action_type == "pypi_get_version":
