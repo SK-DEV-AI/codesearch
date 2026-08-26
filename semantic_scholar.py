@@ -100,7 +100,7 @@ async def search_papers(query: str, limit: int = 10, year: str = "",
         if fields_of_study:
             params["fieldsOfStudy"] = fields_of_study
         if open_access:
-            params["openAccessPdf"] = ""
+            params["openAccessPdf"] = "true"
         if offset:
             params["offset"] = offset
         r = await _s2_get(S2_SEARCH, params)

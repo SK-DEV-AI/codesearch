@@ -123,7 +123,7 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
         if search_type == "code":
             for item in items:
                 text_matches = item.get("text_matches", [])
-                snippet = text_matches[0]["fragment"] if text_matches else ""
+                snippet = text_matches[0].get("fragment", "") if text_matches else ""
                 results.append({
                     "file": item["name"], "path": item["path"],
                     "url": item["html_url"], "repo": item["repository"]["full_name"],

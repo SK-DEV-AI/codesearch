@@ -41,7 +41,7 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue
-                return {"success": False, "error": last_err}
+                break
             struct_args: dict[str, str] = {"repoName": repo_label}
             if wiki_name:
                 struct_args["wikiName"] = wiki_name
@@ -54,10 +54,14 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                 if attempt < MAX_DEEPWIKI_RETRIES - 1:
                     await asyncio.sleep(BASE_DELAY * (2 ** attempt))
                     continue
-                return {"success": False, "error": last_err}
+                break
             sdata = _parse_mcp_sse(struct.text)
             if not sdata or "result" not in sdata:
-                return {"success": False, "error": "no result from structure"}
+                last_err = "no result from structure"
+                if attempt < MAX_DEEPWIKI_RETRIES - 1:
+                    await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+                    continue
+                break
             sections = []
             for item in sdata["result"].get("content", []):
                 if item.get("type") == "text":

@@ -242,13 +242,16 @@ async def get_pkg_changelog(name: str, registry: str = "auto",
     releases = r.get("releases", [])
     filtered = []
     def _vkey(s: str) -> tuple:
-        parts = s.lstrip("v").split(".")
-        return tuple(int(p) if p.isdigit() else (0 if p else 0) for p in parts)
+        return tuple(int(p) if p.isdigit() else 0 for p in s.lstrip("v").split("."))
+    def _vcmp(a: tuple, b: tuple) -> int:
+        n = max(len(a), len(b))
+        a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+        return (a > b) - (a < b)
     for rel in releases:
         tag = rel.get("tag", "").lstrip("v")
-        if from_version and _vkey(tag) < _vkey(from_version):
+        if from_version and _vcmp(_vkey(tag), _vkey(from_version)) < 0:
             continue
-        if to_version and _vkey(tag) > _vkey(to_version):
+        if to_version and _vcmp(_vkey(tag), _vkey(to_version)) > 0:
             continue
         filtered.append(rel)
         if len(filtered) >= count:

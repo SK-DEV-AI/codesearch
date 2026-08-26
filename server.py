@@ -49,7 +49,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
     get_dependencies, get_dependents, get_github_repo, get_github_dependencies,
     li_list_platforms, li_list_licenses, li_keyword_projects)
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
-                       search_vulnerabilities, analyze_license)
+                       analyze_license)
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
     readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
@@ -215,7 +215,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "accepted": {"type": "boolean"},
                     "closed": {"type": "boolean"},
                     "sort": {"type": "string", "default": "relevance"},
-                    "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers_by_ids", "users_by_ids"]},
+                    "type": {"type": "string", "default": "search", "enum": ["search", "excerpts", "faq", "answers", "similar", "tags_info", "tags_wikis"]},
                     "site": {"type": "string", "default": "stackoverflow"},
                     "question_id": {"type": "integer"},
                     "ids": {"type": "string", "description": "Comma-separated IDs for questions_by_ids / answers_by_ids / users_by_ids"},
@@ -277,7 +277,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "search", "license"]},
+                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "license"]},
                     "platform": {"type": "string"},
                     "name": {"type": "string"},
                     "version": {"type": "string"},
@@ -794,11 +794,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 r = await get_vulnerability_detail(vuln_id=str(arguments.get("vuln_id", "")))
             elif action == "latest_version":
                 r = await get_component_latest_version(purl=str(arguments.get("purl", "")))
-            elif action == "search":
-                r = await search_vulnerabilities(
-                    keyword=str(arguments.get("keyword", "")),
-                    limit=int(arguments.get("limit", 10)),
-                )
             elif action == "license":
                 r = await analyze_license(purl=str(arguments.get("purl", "")))
             else:

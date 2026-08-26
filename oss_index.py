@@ -131,31 +131,6 @@ async def get_component_latest_version(purl: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def search_vulnerabilities(keyword: str, limit: int = 10) -> dict:
-    if not OSS_TOKEN:
-        return {"success": False, "error": "OSS_TOKEN not configured"}
-    oss_key = await _next_oss_key()
-    try:
-        c = get_http_client()
-        r = await c.get(f"{GUIDE_API}/security-data/packages",
-                        params={"q": keyword, "limit": min(limit, 50)},
-                        headers={"Authorization": f"Bearer {oss_key}"})
-        if r.status_code != 200:
-            return {"success": False, "error": api_error("Guide security-data", r)}
-        data = r.json()
-        results = []
-        for pkg in (data if isinstance(data, list) else [])[:limit]:
-            results.append({
-                "coordinates": pkg.get("coordinates", ""),
-                "package_name": pkg.get("package", {}).get("name", ""),
-                "ecosystem": pkg.get("package", {}).get("ecosystem", ""),
-                "latest_version": pkg.get("latestVersion", ""),
-            })
-        return {"success": True, "results": results, "total": len(results)}
-    except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
-
-
 async def analyze_license(purl: str) -> dict:
     if not OSS_TOKEN:
         return {"success": False, "error": "OSS_TOKEN not configured"}

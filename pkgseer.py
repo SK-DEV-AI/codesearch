@@ -235,7 +235,10 @@ async def jsdelivr_list_files(spec: str) -> dict[str, Any]:
         meta = await c.get(f"{_JSDELIVR_API}/packages/npm/{pkg_name}")
         if meta.status_code != 200:
             return {"success": False, "error": api_error("jsDelivr", meta)}
-        version = str((meta.json().get("tags") or {}).get("latest", ""))
+        try:
+            version = str((meta.json().get("tags") or {}).get("latest", ""))
+        except ValueError:
+            return {"success": False, "error": "jsDelivr: malformed tags response"}
         if not version:
             return {"success": False, "error": "jsDelivr: no latest tag for package"}
     url = f"{_JSDELIVR_API}/packages/npm/{pkg_name}@{version}?structure=flat"
