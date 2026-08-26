@@ -173,19 +173,6 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             },
         ),
         Tool(
-            name="openalex",
-            description="Search OpenAlex academic research database — papers, authors, institutions, and research topics. Free, no API key needed. e.g. openalex(query='transformer attention', action='works')",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "action": {"type": "string", "description": "Search entity type", "enum": ["works", "authors", "topics", "institutions", "sources"]},
-                    "count": {"type": "integer", "default": 10},
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
             name="search_package",
             description="Raw package registry queries (npm/PyPI/crates + deps.dev). Use for fast single-source lookups. For composite intelligence (Libraries.io + Sonatype vulns), use `pkg` instead. e.g. search_package(name='express', registry='npm')",
             input_schema={
@@ -193,7 +180,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "action": {"type": "string", "description": "npm_dist_tags|npm_versions|npm_time|npm_get_version|pypi_versions|pypi_get_version|crates_downloads|crates_reverse_deps|crates_owners|crates_categories|crates_keywords|crates_versions|crates_get_version|crates_get_readme|crates_summary|depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query. NOTE: crates_summary, crates_categories, crates_keywords ignore name (global stats); depsdev_* take name as a PURL (e.g. pkg:npm/express@4.18)"},
+                    "action": {"type": "string", "enum": ["npm_versions","pypi_versions","crates_versions","npm_dist_tags","pypi_get_version","crates_get_version"], "description": "npm_versions|pypi_versions|crates_versions (list versions), npm_dist_tags, pypi_get_version/crates_get_version (one version). For full metadata use pkg instead."},
                     "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
@@ -295,7 +282,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "devdocs_list", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_meta", "devdocs_toc", "context7_add_repo", "rtd_info", "rtd_versions", "rtd_search", "rtd_translations", "rtd_subprojects", "rtd_builds"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "rtd_search", "context7_add_repo"], "default": "search"},
                     "query": {"type": "string"},
                     "library": {"type": "string"},
                     "library_id": {"type": "string", "description": "Context7 library ID (skip search)"},
@@ -315,7 +302,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "arxiv_search", "author_by_id", "bulk_search", "recommendations_negatives"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "arxiv_search"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
@@ -395,30 +382,6 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             },
         ),
         Tool(
-            name="code_grep",
-            description="Grep through indexed dependency source for a text pattern. No clone needed. Powered by PkgSeer. e.g. code_grep(spec='npm:express', pattern='handleAuth')",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
-                    "pattern": {"type": "string", "description": "Text pattern to search for"},
-                    "path_prefix": {"type": "string", "description": "Optional path prefix to narrow the search"},
-                },
-                "required": ["spec", "pattern"],
-            },
-        ),
-        Tool(
-            name="pkg_deps",
-            description="Analyze transitive dependencies for a package with conflict detection across 8+ registries. Powered by PkgSeer. e.g. pkg_deps(spec='npm:express')",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "spec": {"type": "string", "description": "Package spec: registry:name[@version] (e.g. npm:express)"},
-                },
-                "required": ["spec"],
-            },
-        ),
-        Tool(
             name="pkg",
             description="Package intelligence: info (composite metadata — Libraries.io + Sonatype + PkgSeer), changelog (release notes), upgrade_review (vulns+changelog+deps diff between versions), files (list source files), read (read a source file). For raw single-source registry queries (npm versions, crates categories), use `search_package` instead. e.g. pkg(name='express', action='info')",
             input_schema={
@@ -475,19 +438,6 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "repository": {"type": "string", "description": "GitHub repo: URL (https://github.com/owner/repo) or owner/repo string"},
                 },
                 "required": ["repository"],
-            },
-        ),
-        Tool(
-            name="trending",
-            description="Discover trending/hot repositories. Wraps GitHub search with sort=stars and auto-computed date filters. e.g. trending(since='weekly', language='python')",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string", "enum": ["github"], "default": "github", "description": "Platform to find trending items (github for now)"},
-                    "language": {"type": "string", "description": "Programming language filter (e.g. python, rust, typescript)"},
-                    "since": {"type": "string", "enum": ["daily", "weekly", "monthly"], "default": "weekly", "description": "Time range for trending"},
-                    "limit": {"type": "integer", "default": 10, "description": "Max results"},
-                },
             },
         ),
     ])
@@ -899,22 +849,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 r = await readthedocs_builds(str(arguments.get("project", "")))
             else:
                 return _res({"error": f"unknown docs action: {action}"}, False)
-            return _res(r, r.get("success", False))
-
-        elif name == "openalex":
-            query = str(arguments.get("query", ""))
-            action = str(arguments.get("action", "works"))
-            cnt = int(arguments.get("count", 10))
-            if action == "authors":
-                r = await search_openalex_authors(query, cnt)
-            elif action == "topics":
-                r = await search_openalex_topics(query, cnt)
-            elif action == "institutions":
-                r = await search_openalex_institutions(query, cnt)
-            elif action == "sources":
-                r = await search_openalex_sources(query, cnt)
-            else:
-                r = await search_openalex(query, cnt)
             return _res(r, r.get("success", False))
 
         elif name == "search_all":
@@ -1339,18 +1273,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             )
             return _res(r, r.get("success", False))
 
-        elif name == "code_grep":
-            r = await pkgseer_code_grep(
-                spec=str(arguments.get("spec", "")),
-                pattern=str(arguments.get("pattern", "")),
-                path_prefix=str(arguments.get("path_prefix", "")),
-            )
-            return _res(r, r.get("success", False))
-
-        elif name == "pkg_deps":
-            r = await pkgseer_pkg_deps(spec=str(arguments.get("spec", "")))
-            return _res(r, r.get("success", False))
-
         elif name == "enrich":
             query = str(arguments.get("query", ""))
             raw_results = arguments.get("results", [])
@@ -1368,21 +1290,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             r = await analyze_repo(repo_str)
             return _res(r, r.get("success", False))
 
-        elif name == "trending":
-            source = str(arguments.get("source", "github"))
-            language = str(arguments.get("language", ""))
-            since = str(arguments.get("since", "weekly"))
-            limit = int(arguments.get("limit", 10))
-            days = {"daily": 1, "weekly": 7, "monthly": 30}.get(since, 7)
-            since_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-            r = await search_github(
-                q="", sort="stars", order="desc",
-                created=f">{since_date}", language=language,
-                count=limit, search_type="repos")
-            for item in r.get("results", []):
-                if isinstance(item, dict):
-                    item["source"] = source
-            return _res(r, r.get("success", False))
 
         else:
             return _res({"error": f"unknown tool: {name}"}, False)
