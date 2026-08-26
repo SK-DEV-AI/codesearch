@@ -184,36 +184,3 @@ async def analyze_license(purl: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def quick_component_report(purl: str) -> dict:
-    if not OSS_TOKEN:
-        return {"success": False, "error": "OSS_TOKEN not configured"}
-    oss_key = await _next_oss_key()
-    if not purl:
-        return {"success": False, "error": "purl required"}
-    try:
-        c = get_http_client()
-        r = await c.post(f"{OSS_API}/quick",
-                         json={"coordinates": [purl]},
-                         headers={"Authorization": f"Bearer {oss_key}", "Content-Type": "application/json"})
-        if r.status_code != 200:
-            return {"success": False, "error": api_error("Guide component-report/quick", r)}
-        data = r.json()
-        reports = []
-        for comp in (data if isinstance(data, list) else []):
-            vulnerabilities = []
-            for vuln in comp.get("vulnerabilities", []):
-                vulnerabilities.append({
-                    "id": vuln.get("id", ""),
-                    "title": vuln.get("title", ""),
-                    "cvss_score": vuln.get("cvssScore", 0),
-                    "severity": vuln.get("severity", "unknown"),
-                })
-            reports.append({
-                "coordinates": comp.get("coordinates", ""),
-                "vulnerability_count": len(vulnerabilities),
-                "vulnerabilities": vulnerabilities,
-                "licenses": comp.get("licenses", ""),
-            })
-        return {"success": True, "reports": reports}
-    except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}

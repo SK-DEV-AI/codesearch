@@ -240,10 +240,20 @@ async def get_pypi_versions(name: str) -> dict:
                 "file_count": len(files or []),
             })
         info = data.get("info", {})
+        try:
+            from packaging.version import InvalidVersion, Version
+            def _vkey(v: str):
+                try:
+                    return (0, Version(v))
+                except InvalidVersion:
+                    return (1, ())  # unparseable versions sort last, stable
+        except ImportError:
+            def _vkey(v: str):
+                return (0, v)
         return {"success": True, "name": info.get("name", name),
                 "summary": (info.get("summary") or "")[:300],
                 "total_versions": len(versions),
-                "versions": sorted(versions, key=lambda v: v["version"], reverse=True)}
+                "versions": sorted(versions, key=lambda v: _vkey(v["version"]), reverse=True)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
 

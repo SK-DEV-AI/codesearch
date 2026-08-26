@@ -56,7 +56,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
     if not LI_KEY:
         return {"success": False, "error": "LI_KEY not configured"}
     li_key = await _next_li_key()
-    cache_key = f"li_search:{query}:{platform}:{sort}:{languages}:{licenses}:{keywords}"
+    cache_key = f"li_search:{query}:{platform}:{sort}:{languages}:{licenses}:{keywords}:{per_page}"
     cached = await _cached(cache_key)
     if cached is not None:
         return cached

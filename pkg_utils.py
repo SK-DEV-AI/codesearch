@@ -315,24 +315,26 @@ async def get_pkg_upgrade_review(name: str, registry: str = "auto",
                                                    from_version=current_version,
                                                    to_version=target_version, count=5)
 
-    # 3. Deps diff
-    try:
-        from registries import npm_get_version, crates_get_version
-        cur_deps, tgt_deps = {}, {}
-        if registry == "npm" or registry == "auto":
+    # 3. Deps diff (npm only — registries expose no comparable dep lists)
+    if registry in ("npm", "auto"):
+        try:
+            from registries import npm_get_version
+            cur_deps, tgt_deps = set(), set()
             cur = await npm_get_version(name, current_version)
             tgt = await npm_get_version(name, target_version)
             if cur.get("success"):
                 cur_deps = set(cur.get("dependencies", []))
             if tgt.get("success"):
                 tgt_deps = set(tgt.get("dependencies", []))
-        results["dependencies"] = {
-            "current_deps": list(cur_deps),
-            "target_deps": list(tgt_deps),
-            "removed": list(cur_deps - tgt_deps),
-            "added": list(tgt_deps - cur_deps),
-        }
-    except (ImportError, Exception) as e:
-        results["dependencies"] = {"error": str(e)}
+            results["dependencies"] = {
+                "current_deps": sorted(cur_deps),
+                "target_deps": sorted(tgt_deps),
+                "removed": sorted(cur_deps - tgt_deps),
+                "added": sorted(tgt_deps - cur_deps),
+            }
+        except Exception as e:
+            results["dependencies"] = {"error": str(e)}
+    else:
+        results["dependencies"] = {"skipped": f"dep diff not supported for registry '{registry}'"}
 
     return {"success": True, **results}

@@ -49,7 +49,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
     get_dependencies, get_dependents, get_github_repo, get_github_dependencies,
     li_list_platforms, li_list_licenses, li_keyword_projects)
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
-                       search_vulnerabilities, analyze_license, quick_component_report)
+                       search_vulnerabilities, analyze_license)
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
     readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
@@ -277,7 +277,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "search", "license", "quick_report"]},
+                    "action": {"type": "string", "enum": ["scan", "detail", "latest_version", "search", "license"]},
                     "platform": {"type": "string"},
                     "name": {"type": "string"},
                     "version": {"type": "string"},
@@ -663,7 +663,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                             platform=pkg_info["registry"], name=pkg_name)
                         if vuln_info.get("success"):
                             r["vulnerabilities"] = len(
-                                vuln_info.get("reports", [{}])[0].get("vulnerabilities", []))
+                                (vuln_info.get("reports") or [{}])[0].get("vulnerabilities", []))
                     except ImportError:
                         pass
             return _res(r, r.get("success", False))
@@ -801,8 +801,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 )
             elif action == "license":
                 r = await analyze_license(purl=str(arguments.get("purl", "")))
-            elif action == "quick_report":
-                r = await quick_component_report(purl=str(arguments.get("purl", "")))
             else:
                 r = await scan_vulnerabilities(
                     platform=str(arguments.get("platform", "")),
@@ -1292,7 +1290,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     repo, path=str(arguments.get("path", "")),
                     severity=str(arguments.get("severity", "")),
                     category=str(arguments.get("category", "")),
-                    max_results=int(arguments.get("max_results", 50)))
+                    max_results=int(arguments.get("max_results", 10)))
             elif action == "file_tree":
                 r = await searchcode_file_tree(
                     repo, path_filter=str(arguments.get("path", "")),
