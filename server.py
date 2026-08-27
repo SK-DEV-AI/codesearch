@@ -1316,7 +1316,17 @@ server = Server("codesearch", instructions=INSTRUCTIONS,
 )
 
 
+async def _parent_watchdog():
+    import os
+    ppid = os.getppid()
+    while True:
+        await asyncio.sleep(2)
+        if os.getppid() == 1 or os.getppid() != ppid:
+            import sys
+            sys.exit(0)
+
 async def main():
+    asyncio.create_task(_parent_watchdog())
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
