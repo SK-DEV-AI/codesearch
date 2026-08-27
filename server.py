@@ -1318,10 +1318,9 @@ server = Server("codesearch", instructions=INSTRUCTIONS,
 
 async def _parent_watchdog():
     import os
-    ppid = os.getppid()
     while True:
         await asyncio.sleep(2)
-        if os.getppid() == 1 or os.getppid() != ppid:
+        if os.getppid() == 1:
             import sys
             sys.exit(0)
 
