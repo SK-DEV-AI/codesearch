@@ -148,6 +148,8 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
         cache_dir.mkdir(parents=True, exist_ok=True)
         # npm packages pack everything under a single top-level dir (package/)
         # PyPI sdist has variant top-level dirs
+        if len(r.content) > 50 * 1024 * 1024:
+            return {"success": False, "error": "tarball too large (>50 MB)"}
         content = io.BytesIO(r.content)
         with tarfile.open(fileobj=content, mode="r:*") as tar:
             first = tar.next()
@@ -163,7 +165,7 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
                     f.rename(cache_dir / f.name)
                 shutil.rmtree(str(strip_dir))
         return str(cache_dir)
-    except (httpx.HTTPError, OSError, tarfile.TarError) as e:
+    except (httpx.HTTPError, OSError, tarfile.TarError, TypeError) as e:
         logger.warning("download/extract failed for %s: %s", name, e)
         return None
 
