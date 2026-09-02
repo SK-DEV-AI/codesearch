@@ -142,15 +142,20 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
     tarball_url = info["tarball_url"]
     try:
         c = get_http_client()
-        r = await c.get(tarball_url, headers={"User-Agent": "mcp-codesearch/1.0"})
-        if r.status_code != 200:
-            return None
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        # npm packages pack everything under a single top-level dir (package/)
-        # PyPI sdist has variant top-level dirs
-        if len(r.content) > 50 * 1024 * 1024:
-            return {"success": False, "error": "tarball too large (>50 MB)"}
-        content = io.BytesIO(r.content)
+        # M1: stream + abort once over 50 MB (don't buffer the whole tarball
+        # into RAM before checking the guard).
+        async with c.stream("GET", tarball_url, headers={"User-Agent": "mcp-codesearch/1.0"}) as r:
+            if r.status_code != 200:
+                return None
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            chunks = []
+            size = 0
+            async for chunk in r.aiter_bytes():
+                size += len(chunk)
+                if size > 50 * 1024 * 1024:
+                    return None  # oversize; callers treat None as download-failed
+                chunks.append(chunk)
+        content = io.BytesIO(b"".join(chunks))
         with tarfile.open(fileobj=content, mode="r:*") as tar:
             first = tar.next()
             if first is None:
@@ -211,7 +216,16 @@ async def read_package_file(registry: str, name: str, path: str,
     if not file_path.exists() or not file_path.is_file():
         return {"success": False, "error": f"file '{path}' not found in package"}
     try:
-        content = file_path.read_text(encoding="utf-8", errors="replace")
+        # H1: contain the path inside the extracted package. `path` is
+        # client-supplied — resolve both sides so `../`, absolute paths, and
+        # symlink escapes can't read arbitrary local files.
+        root = Path(extract_dir).resolve()
+        fp = (root / path).resolve()
+        if not fp.is_relative_to(root) or not fp.is_file():
+            return {"success": False, "error": f"invalid path: {path}"}
+        if fp.stat().st_size > 2_000_000:  # M2: cap unbounded file reads
+            return {"success": False, "error": f"file too large to read (>2 MB): {path}"}
+        content = fp.read_text(encoding="utf-8", errors="replace")
         lines = content.split("\n")
         return {"success": True, "content": content, "path": path,
                 "total_lines": len(lines), "total_chars": len(content),

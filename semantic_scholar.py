@@ -290,7 +290,7 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
         body: dict[str, Any] = {"positivePaperIds": positive_ids[:100], "limit": min(limit, 100)}
         if negative_ids: body["negativePaperIds"] = negative_ids[:20]
         c = get_http_client()
-        r = await c.post(S2_RECOMMENDATIONS.replace("/forpaper",""), json=body, params={"fields": f}, headers=headers)
+        r = await c.post(S2_RECOMMENDATIONS, json=body, params={"fields": f}, headers=headers)
         if r.status_code != 200: return {"success": False, "error": api_error("S2 recs", r)}
         data = r.json().get("recommendedPapers", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),

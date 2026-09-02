@@ -280,12 +280,13 @@ async def get_pypi_version(name: str, version: str) -> dict:
                 "sha256": (url_info.get("digests", {}) or {}).get("sha256", ""),
                 "upload_time": url_info.get("upload_time_iso_8601", ""),
             })
+        yanked = any(f.get("yanked", False) for f in files)
+        yanked_reason = next((f.get("yanked_reason", "") for f in files if f.get("yanked")), "")
         return {"success": True, "name": info.get("name", name), "version": info.get("version", version),
                 "summary": info.get("summary", ""),
                 "license": info.get("license", ""),
                 "requires_python": info.get("requires_python", ""),
-                "yanked": info.get("yanked", False),
-                "yanked_reason": info.get("yanked_reason", ""),
+                "yanked": yanked, "yanked_reason": yanked_reason,
                 "files": files}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}

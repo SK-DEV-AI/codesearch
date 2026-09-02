@@ -5,7 +5,7 @@ import asyncio
 from config import get_http_client, api_error
 from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank, fallback_sort, killswitch_active
-from security import SecurityError, safe_fetch, validate_url as _validate_url
+from security import SecurityError, safe_fetch, safe_stream, validate_url as _validate_url
 
 
 async def enrich_results(
@@ -39,11 +39,11 @@ async def enrich_results(
                 r["__fetch_error"] = "deadline"
                 return r
             try:
-                resp = await safe_fetch(fetcher, url, timeout=10)
-                if resp.status_code == 200:
-                    r["full_content"] = resp.text[:100000 if include_html else 50000]
-                else:
-                    r["__fetch_error"] = api_error("", resp)
+                # M4: stream + hard cap via safe_stream (per-hop SSRF kept)
+                body = await safe_stream(
+                    fetcher, url, max_bytes=100000 if include_html else 50000,
+                    timeout=10)
+                r["full_content"] = body.decode("utf-8", errors="replace")
             except Exception as e:
                 r["__fetch_error"] = f"{type(e).__name__}: {str(e)[:80]}"
         return r

@@ -273,6 +273,9 @@ async def jsdelivr_read_file(spec: str, file_path: str) -> dict[str, Any]:
     if "@" in pkg_name and not pkg_name.startswith("@"):
         pkg_name, version = pkg_name.rsplit("@", 1)
     ver_part = f"@{version}" if version else ""
+    # L9: reject traversal up front — CDN normalizes it, but don't send it
+    if ".." in file_path.split("/"):
+        return {"success": False, "error": f"invalid path: {file_path}"}
     file_path_clean = file_path if file_path.startswith("/") else f"/{file_path}"
     url = f"https://cdn.jsdelivr.net/npm/{pkg_name}{ver_part}{file_path_clean}"
     try:

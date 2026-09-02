@@ -15,14 +15,19 @@ BASE_DELAY = 1.0
 
 
 def _collect_wrb_frames(node: Any, out: list[dict]) -> None:
-    if not isinstance(node, list):
-        return
-    if len(node) >= 3 and node[0] == "wrb.fr" and isinstance(node[1], str):
-        raw = node[2]
-        payload = json.loads(raw) if isinstance(raw, str) else raw
-        out.append({"rpcId": node[1], "payload": payload})
-    for child in node:
-        _collect_wrb_frames(child, out)
+    # L11: iterative stack walk — Google's batchexecute payloads can be deeply
+    # nested, and recursion blew the Python stack (RecursionError escaped the
+    # rpc wrapper's catch set).
+    stack: list[Any] = [node]
+    while stack:
+        cur = stack.pop()
+        if not isinstance(cur, list):
+            continue
+        if len(cur) >= 3 and cur[0] == "wrb.fr" and isinstance(cur[1], str):
+            raw = cur[2]
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+            out.append({"rpcId": cur[1], "payload": payload})
+        stack.extend(child for child in cur if isinstance(child, list))
 
 
 def _extract_wrb_frames(text: str) -> list[dict]:

@@ -30,6 +30,10 @@ def get_http_client() -> httpx.AsyncClient:
                     network_backend=PinningNetworkBackend(),
                     max_keepalive_connections=10,
                     max_connections=20)
+                # M7: fail loud if httpx internals shift — never let pinning
+                # degrade silently into an un-validated client.
+                assert hasattr(transport, "_pool"), \
+                    "httpx internals changed; re-wire PinningNetworkBackend"
                 _http_client = httpx.AsyncClient(
                     timeout=30.0,
                     transport=transport,
@@ -134,6 +138,8 @@ async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
                 resp = await c.post(url, timeout=timeout, **kwargs)
             elif method == "PUT":
                 resp = await c.put(url, timeout=timeout, **kwargs)
+            else:
+                raise ValueError(f"unsupported method {method!r}")  # L1
             if resp.status_code >= 500 and attempt < retries:
                 last_err = httpx.HTTPStatusError(
                     f"HTTP {resp.status_code}", request=resp.request, response=resp)

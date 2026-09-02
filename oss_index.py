@@ -38,11 +38,17 @@ async def scan_vulnerabilities(platform: str, name: str, version: str = "",
         for comp in (data if isinstance(data, list) else []):
             vulnerabilities = []
             for vuln in comp.get("vulnerabilities", []):
+                # L12: Guide v3 has no plain `severity` field — derive from cvss
+                cvss = vuln.get("cvssScore", 0) or 0
+                try: cvss = float(cvss)
+                except (TypeError, ValueError): cvss = 0
+                sev = "critical" if cvss >= 9 else "high" if cvss >= 7 else \
+                      "medium" if cvss >= 4 else "low"
                 vulnerabilities.append({
                     "id": vuln.get("id", ""),
                     "title": vuln.get("title", ""),
-                    "cvss_score": vuln.get("cvssScore", 0),
-                    "severity": vuln.get("severity", "unknown"),
+                    "cvss_score": cvss,
+                    "severity": sev,
                     "cve": vuln.get("cve", ""),
                     "cwe": vuln.get("cwe", ""),
                     "description": (vuln.get("description", "") or "")[:300],

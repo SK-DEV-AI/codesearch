@@ -12,13 +12,19 @@ BASE_DELAY = 1.0
 
 
 def _parse_mcp_sse(text: str) -> dict | None:
+    # L10: SSE frames can split one JSON payload across multiple `data:` lines.
+    # Collect the current frame (data lines) and try each, not just the first.
+    buffered: list[str] = []
     for line in text.split("\n"):
         line = line.strip()
         if line.startswith("data: "):
+            buffered.append(line[6:])
             try:
-                return json.loads(line[6:])
+                return json.loads("\n".join(buffered))
             except json.JSONDecodeError:
                 continue
+        elif line == "":
+            buffered = []
     try:
         return json.loads(text)
     except json.JSONDecodeError:

@@ -123,9 +123,9 @@ async def analyze_repo(repository: str) -> dict:
     if rel_res.get("success") and rel_res.get("releases"):
         output["releases"] = [
             {
-                "tag_name": r.get("tag_name", ""),
-                "name": r.get("name", "") or r.get("tag_name", ""),
-                "published_at": r.get("published_at", ""),
+                "tag_name": r.get("tag", r.get("tag_name", "")),
+                "name": r.get("name", "") or r.get("tag", r.get("tag_name", "")),
+                "published_at": r.get("published", r.get("published_at", "")),
                 "prerelease": r.get("prerelease", False),
                 "body_preview": (r.get("body", "") or "")[:300],
             }

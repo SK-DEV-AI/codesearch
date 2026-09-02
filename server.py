@@ -99,7 +99,7 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `synthesize=true`: get a Groq-summarized answer (default on for search_all; off for searchcode/code tools). Set `synthesize=false` for raw results
+- `synthesize=true`: get a Groq-summarized answer (**only when `GROQ_API_KEYS` env is set** — otherwise it silently no-ops and you get raw results). default on for search_all; off for searchcode/code tools. Set `synthesize=false` for raw results
 """
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -167,7 +167,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "so_sort": {"type": "string", "default": "votes", "description": "Stack Exchange sort: votes/activity/creation/relevance"},
                     "fromdate": {"type": "string", "description": "Stack Exchange results older than ISO date"},
                     "todate": {"type": "string", "description": "Stack Exchange results newer than ISO date"},
-                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations"},
+                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations (no-op without GROQ_API_KEYS)"},
                 },
                 "required": ["query"],
             },
@@ -611,8 +611,13 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                         pass
                     try:
                         from oss_index import scan_vulnerabilities
+                        # M5: pass the resolved version — version-less PURLs always
+                        # return empty from Sonatype Guide, so the count was 0.
+                        vname = pkg_name
+                        if pkg_info.get("version"):
+                            vname = f"{pkg_name}@{pkg_info['version']}"
                         vuln_info = await scan_vulnerabilities(
-                            platform=pkg_info["registry"], name=pkg_name)
+                            platform=pkg_info["registry"], name=vname)
                         if vuln_info.get("success"):
                             r["vulnerabilities"] = len(
                                 (vuln_info.get("reports") or [{}])[0].get("vulnerabilities", []))
