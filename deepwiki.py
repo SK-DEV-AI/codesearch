@@ -11,6 +11,20 @@ MAX_DEEPWIKI_RETRIES = 3
 BASE_DELAY = 1.0
 
 
+_MCP_ERROR_MARKERS = ("Repository not found", "Error processing question:", "error while processing your question")
+
+
+def _is_error_text(text: str) -> bool:
+    """DeepWiki returns success:True even when the answer/structure text is an
+    error (e.g. 'Repository not found. Visit https://deepwiki.com to index it.').
+    Detect those so the caller treats them as failures instead of valid output."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    first = t[:120]
+    return any(m in first for m in _MCP_ERROR_MARKERS)
+
+
 def _parse_mcp_sse(text: str) -> dict | None:
     # L10: SSE frames can split one JSON payload across multiple `data:` lines.
     # Collect the current frame (data lines) and try each, not just the first.
@@ -49,8 +63,6 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
                     continue
                 break
             struct_args: dict[str, str] = {"repoName": repo_label}
-            if wiki_name:
-                struct_args["wikiName"] = wiki_name
             struct = await c.post(DEEPWIKI_MCP, json={
                 "jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": {"name": "read_wiki_structure", "arguments": struct_args}
@@ -72,9 +84,11 @@ async def deepwiki_fetch(owner: str, repo: str, wiki_name: str = "") -> dict:
             for item in sdata["result"].get("content", []):
                 if item.get("type") == "text":
                     sections.append(item["text"][:3000])
+            joined = "".join(sections)
+            if _is_error_text(joined):
+                # surface a clean failure so the caller knows the repo is unindexed/wrong
+                return {"success": False, "error": sections[0][:300] if sections else "DeepWiki: repository not found/unindexed", "repo": repo_label}
             detail_args: dict[str, str] = {"repoName": repo_label}
-            if wiki_name:
-                detail_args["wikiName"] = wiki_name
             detail_data = await c.post(DEEPWIKI_MCP, json={
                 "jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "read_wiki_contents", "arguments": detail_args}
@@ -122,8 +136,6 @@ async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
                     continue
                 return {"success": False, "error": last_err}
             ask_args: dict = {"repoName": repo_label, "question": question}
-            if wiki_name:
-                ask_args["wikiName"] = wiki_name
             r = await c.post(DEEPWIKI_MCP, json={
                 "jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": {"name": "ask_question", "arguments": ask_args}
@@ -145,7 +157,10 @@ async def deepwiki_ask(owner: str = "", repo: str = "", question: str = "",
             for item in data["result"].get("content", []):
                 if item.get("type") == "text":
                     answer += item["text"] + "\n"
-            return {"success": True, "answer": answer.strip(), "source": "deepwiki"}
+            answer = answer.strip()
+            if _is_error_text(answer):
+                return {"success": False, "error": answer[:300], "repo": repo_label if isinstance(repo_label, str) else "/".join(repo_label)}
+            return {"success": True, "answer": answer, "source": "deepwiki"}
         except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
             last_err = str(e)
             if attempt < MAX_DEEPWIKI_RETRIES - 1:
