@@ -11,7 +11,7 @@ MAX_DEEPWIKI_RETRIES = 3
 BASE_DELAY = 1.0
 
 
-_MCP_ERROR_MARKERS = ("Repository not found", "Error processing question:", "error while processing your question")
+_MCP_ERROR_MARKERS = ("Repository not found", "Error processing question:", "error while processing your question", "Invalid repoName format")
 
 
 def _is_error_text(text: str) -> bool:
