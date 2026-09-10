@@ -9,4 +9,5 @@ export LI_KEY="YOUR_KEY"
 export OSS_TOKEN="sonatype_pat_YOUR_TOKEN"
 export TAVILY_KEYS="tvly-dev-YOUR_KEY"
 export FIRECRAWL_KEYS="fc-YOUR_KEY"
-exec /home/sk/.local/share/venvs/mcp/bin/python3 /home/sk/.config/opencode/mcp-servers/codesearch/server.py "$@"
+export S2_API_KEY="YOUR_KEY"  # Semantic Scholar: free key at semanticscholar.org/product/api (1 RPS dedicated vs shared anonymous pool)
+exec /home/sk/.local/share/venvs/mcp/bin/python3 "$(dirname "$0")/server.py" "$@"

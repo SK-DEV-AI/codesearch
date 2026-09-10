@@ -34,23 +34,36 @@ def _s2_headers() -> dict[str, str]:
     return h
 
 
+def _s2_backoff(r: httpx.Response, attempt: int) -> float:
+    # S2 sends Retry-After on 429s — honor it, falling back to exp backoff.
+    try:
+        retry_after = float(r.headers.get("retry-after", "0"))
+    except (ValueError, TypeError):
+        retry_after = 0
+    return min(max(2 ** attempt, retry_after), 30)
+
+
 async def _s2_get(url: str, params: dict | None = None, timeout: int = 15) -> httpx.Response:
     for attempt in range(_S2_RETRIES):
         c = get_http_client()
         r = await c.get(url, params=params, headers=_s2_headers(), timeout=timeout)
         if r.status_code != 429 or attempt == _S2_RETRIES - 1:
             return r
-        await asyncio.sleep(2 ** attempt)
+        await asyncio.sleep(_s2_backoff(r, attempt))
     return r
 
 
-async def _s2_post(url: str, json: dict, params: dict | None = None, timeout: int = 30) -> httpx.Response:
+async def _s2_post(url: str, json: dict, params: dict | None = None, timeout: int = 30,
+               extra_headers: dict | None = None) -> httpx.Response:
     for attempt in range(_S2_RETRIES):
         c = get_http_client()
-        r = await c.post(url, json=json, params=params, headers=_s2_headers(), timeout=timeout)
+        h = _s2_headers()
+        if extra_headers:
+            h.update(extra_headers)
+        r = await c.post(url, json=json, params=params, headers=h, timeout=timeout)
         if r.status_code != 429 or attempt == _S2_RETRIES - 1:
             return r
-        await asyncio.sleep(2 ** attempt)
+        await asyncio.sleep(_s2_backoff(r, attempt))
     return r
 
 
@@ -267,9 +280,8 @@ async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
     if not ids: return {"success": False, "error": "no paper IDs"}
     try:
         f = fields or FIELDS
-        headers = _s2_headers(); headers["Content-Type"] = "application/json"
-        c = get_http_client()
-        r = await c.post(f"{S2_PAPER}/batch", json={"ids": ids[:500]}, params={"fields": f}, headers=headers)
+        r = await _s2_post(f"{S2_PAPER}/batch", {"ids": ids[:500]}, params={"fields": f},
+                           extra_headers={"Content-Type": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("S2 batch", r)}
         data = r.json().get("data", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
@@ -286,11 +298,10 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
     if not positive_ids: return {"success": False, "error": "no positive paper IDs"}
     try:
         f = fields or FIELDS
-        headers = _s2_headers(); headers["Content-Type"] = "application/json"
         body: dict[str, Any] = {"positivePaperIds": positive_ids[:100], "limit": min(limit, 100)}
         if negative_ids: body["negativePaperIds"] = negative_ids[:20]
-        c = get_http_client()
-        r = await c.post(S2_RECOMMENDATIONS, json=body, params={"fields": f}, headers=headers)
+        r = await _s2_post(S2_RECOMMENDATIONS, body, params={"fields": f},
+                           extra_headers={"Content-Type": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("S2 recs", r)}
         data = r.json().get("recommendedPapers", [])
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
