@@ -298,7 +298,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="papers",
-            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
+            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search. search tries S2 then falls back across arXiv/OpenAlex/CORE so one source outage doesn't fail the call. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -349,7 +349,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query supporting implicit AND, OR, parens, -exclude, and qualifiers (kind:, lang:, path:)"},
-                    "target": {"type": "string", "description": "Search scope: registry:name[@version] (e.g. npm:express) or github:org/repo"},
+                    "target": {"type": "string", "description": "Package scope: registry:name[@version] (npm:express, pypi:requests, crates:serde). PkgSeer indexes npm/pypi/crates only. For GitHub repos use `searchcode` (repository=URL) or `analyze`."},
                     "source": {"type": "string", "enum": ["docs", "code", "symbol"], "description": "Restrict results to a specific source type"},
                     "lang": {"type": "string", "description": "Programming language filter"},
                     "limit": {"type": "integer", "default": 10, "description": "Max results (1-100)"},
@@ -441,6 +441,146 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             },
         ),
     ])
+
+
+def _to_year(v):
+    try:
+        return int(str(v)[:4])
+    except (ValueError, TypeError):
+        return None
+
+
+def _norm_arxiv(p: dict) -> dict:
+    pid = p.get("paper_id", "")
+    return {
+        "paperId": f"arXiv:{pid}" if pid else "", "title": p.get("title", ""),
+        "year": _to_year(p.get("published", "")), "abstract": p.get("summary", ""),
+        "citationCount": 0, "url": f"https://arxiv.org/abs/{pid}" if pid else "",
+        "venue": ", ".join(p.get("categories", [])), "publicationDate": (p.get("published", "") or "")[:10],
+        "authors": p.get("authors", []), "externalIds": {"ArXiv": pid} if pid else {},
+        "tldr": "", "isOpenAccess": True, "openAccessPdf": p.get("pdf_url", "") or None,
+        "s2FieldsOfStudy": [], "publicationTypes": [], "referenceCount": 0,
+        "influentialCitationCount": 0, "source": "arxiv",
+    }
+
+
+def _norm_openalex(w: dict) -> dict:
+    url = w.get("url", "")
+    return {
+        "paperId": url, "title": w.get("title", ""),
+        "year": _to_year(w.get("year")), "abstract": w.get("snippet", ""),
+        "citationCount": w.get("citations", 0), "url": w.get("doi", "") or url,
+        "venue": "", "publicationDate": "", "authors": w.get("authors", []),
+        "externalIds": {"DOI": w["doi"]} if w.get("doi") else {}, "tldr": "",
+        "isOpenAccess": False, "openAccessPdf": None, "s2FieldsOfStudy": [],
+        "publicationTypes": [w["type"]] if w.get("type") else [], "referenceCount": 0,
+        "influentialCitationCount": 0, "source": "openalex",
+    }
+
+
+def _norm_core(w: dict) -> dict:
+    doi = w.get("doi", "")
+    url = w.get("downloadUrl", "") or (f"https://doi.org/{doi}" if doi else "")
+    return {
+        "paperId": f"CORE:{w['id']}" if w.get("id", "") else "", "title": w.get("title", ""),
+        "year": _to_year(w.get("year")), "abstract": w.get("abstract", ""),
+        "citationCount": 0, "url": url, "venue": w.get("publisher", ""),
+        "publicationDate": "", "authors": w.get("authors", []),
+        "externalIds": {"DOI": doi} if doi else {}, "tldr": "",
+        "isOpenAccess": bool(w.get("downloadUrl")), "openAccessPdf": w.get("downloadUrl", "") or None,
+        "s2FieldsOfStudy": [], "publicationTypes": [], "referenceCount": 0,
+        "influentialCitationCount": 0, "source": "core",
+    }
+
+
+async def _arxiv_search(query: str, count: int) -> dict:
+    """Keyless arXiv search. Shared by the arxiv_search action and the search fallback chain."""
+    import xml.etree.ElementTree as ET
+    try:
+        c = get_http_client()
+        params = {"search_query": f"all:{query}", "max_results": count,
+                  "sortBy": "relevance", "sortOrder": "descending"}
+        resp = await c.get("https://export.arxiv.org/api/query", params=params, timeout=15)
+        if resp.status_code == 200:
+            papers = []
+            root = ET.fromstring(resp.content)
+            ns = {"a": "http://www.w3.org/2005/Atom",
+                  "arxiv": "http://arxiv.org/schemas/atom"}
+            for entry in root.findall("a:entry", ns):
+                pid = entry.find("a:id", ns)
+                title = entry.find("a:title", ns)
+                summary = entry.find("a:summary", ns)
+                published = entry.find("a:published", ns)
+                cats = [c.get("term", "") for c in entry.findall("arxiv:primary_category", ns)]
+                authors = [a.find("a:name", ns).text if a.find("a:name", ns) is not None else ""
+                           for a in entry.findall("a:author", ns)]
+                pdf_link = ""
+                for link in entry.findall("a:link", ns):
+                    if link.get("title") == "pdf":
+                        pdf_link = link.get("href", "")
+                        break
+                papers.append({
+                    "paper_id": pid.text.strip().split("/")[-1] if pid is not None and pid.text else "",
+                    "title": title.text.strip() if title is not None and title.text else "",
+                    "summary": summary.text.strip()[:500] if summary is not None and summary.text else "",
+                    "published": published.text.strip()[:10] if published is not None and published.text else "",
+                    "authors": authors,
+                    "categories": cats,
+                    "pdf_url": pdf_link,
+                })
+            return {"success": True, "total": len(papers), "papers": papers}
+        return {"success": False, "error": api_error("arXiv returned", resp)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _papers_search(query: str, limit: int, year: str = "", fields_of_study: str = "",
+                         open_access: bool = False, offset: int = 0) -> dict:
+    """papers action=search: S2 first, then arXiv -> OpenAlex -> CORE.
+    One source's outage (e.g. S2 429 with no API key) no longer fails the call."""
+    r = await search_papers(query, limit, year, fields_of_study, open_access, offset)
+    if r.get("success"):
+        r["source"] = "semantic_scholar"
+        return r
+    s2_error = r.get("error", "unknown")
+    errors = {"semantic_scholar": s2_error}
+    empty_ok: dict | None = None
+    ar = await _arxiv_search(query, min(limit, 50))
+    if ar.get("success"):
+        if ar.get("papers"):
+            papers = [_norm_arxiv(p) for p in ar["papers"][:limit]]
+            return {"success": True, "source": "arxiv", "s2_error": s2_error,
+                    "results": papers, "total": ar.get("total", len(papers)), "offset": 0}
+        empty_ok = empty_ok or {"success": True, "source": "arxiv", "s2_error": s2_error,
+                                "results": [], "total": 0, "offset": 0}
+    else:
+        errors["arxiv"] = ar.get("error", "unknown")
+    oa = await search_openalex(query, limit)
+    if oa.get("success"):
+        if oa.get("results"):
+            papers = [_norm_openalex(w) for w in oa["results"][:limit]]
+            return {"success": True, "source": "openalex", "s2_error": s2_error,
+                    "results": papers, "total": oa.get("total", len(papers)), "offset": 0}
+        empty_ok = empty_ok or {"success": True, "source": "openalex", "s2_error": s2_error,
+                                "results": [], "total": 0, "offset": 0}
+    else:
+        errors["openalex"] = oa.get("error", "unknown")
+    if CORE_API_AVAILABLE:
+        co = await search_core_works(query, limit)
+        if co.get("success"):
+            if co.get("results"):
+                papers = [_norm_core(w) for w in co["results"][:limit]]
+                return {"success": True, "source": "core", "s2_error": s2_error,
+                        "results": papers, "total": co.get("totalHits", len(papers)), "offset": 0}
+            empty_ok = empty_ok or {"success": True, "source": "core", "s2_error": s2_error,
+                                    "results": [], "total": 0, "offset": 0}
+        else:
+            errors["core"] = co.get("error", "unknown")
+    else:
+        errors["core"] = "CORE_API_KEY not set"
+    if empty_ok is not None:
+        return empty_ok
+    return {"success": False, "error": "all paper sources failed", "errors": errors}
 
 
 async def handle_call_tool(ctx, params) -> CallToolResult:
@@ -1147,50 +1287,10 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 r = await s2_recommendations_with_negatives(pos_ids, neg_ids or None,
                     limit=int(arguments.get("count",10)))
             elif action == "arxiv_search":
-                c = get_http_client()
-                from urllib.parse import urlencode
-                query = str(arguments.get("query", ""))
-                count = min(int(arguments.get("count", 10)), 50)
-                params = {"search_query": f"all:{query}", "max_results": count,
-                          "sortBy": "relevance", "sortOrder": "descending"}
-                import xml.etree.ElementTree as ET
-                try:
-                    resp = await c.get("https://export.arxiv.org/api/query",
-                                       params=params, timeout=15)
-                    if resp.status_code == 200:
-                        papers = []
-                        root = ET.fromstring(resp.content)
-                        ns = {"a": "http://www.w3.org/2005/Atom",
-                              "arxiv": "http://arxiv.org/schemas/atom"}
-                        for entry in root.findall("a:entry", ns):
-                            pid = entry.find("a:id", ns)
-                            title = entry.find("a:title", ns)
-                            summary = entry.find("a:summary", ns)
-                            published = entry.find("a:published", ns)
-                            cats = [c.get("term", "") for c in entry.findall("arxiv:primary_category", ns)]
-                            authors = [a.find("a:name", ns).text if a.find("a:name", ns) is not None else ""
-                                       for a in entry.findall("a:author", ns)]
-                            pdf_link = ""
-                            for link in entry.findall("a:link", ns):
-                                if link.get("title") == "pdf":
-                                    pdf_link = link.get("href", "")
-                                    break
-                            papers.append({
-                                "paper_id": pid.text.strip().split("/")[-1] if pid is not None and pid.text else "",
-                                "title": title.text.strip() if title is not None and title.text else "",
-                                "summary": summary.text.strip()[:500] if summary is not None and summary.text else "",
-                                "published": published.text.strip()[:10] if published is not None and published.text else "",
-                                "authors": authors,
-                                "categories": cats,
-                                "pdf_url": pdf_link,
-                            })
-                        r = {"success": True, "total": len(papers), "papers": papers}
-                    else:
-                        r = {"success": False, "error": api_error("arXiv returned", resp)}
-                except Exception as e:
-                    r = {"success": False, "error": str(e)}
+                r = await _arxiv_search(str(arguments.get("query", "")),
+                                        min(int(arguments.get("count", 10)), 50))
             else:
-                r = await search_papers(
+                r = await _papers_search(
                     query=str(arguments.get("query", "")),
                     limit=int(arguments.get("count", 10)),
                     year=str(arguments.get("year", "")),
