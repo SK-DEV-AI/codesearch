@@ -261,6 +261,13 @@ async def get_pypi_versions(name: str) -> dict:
 async def get_pypi_version(name: str, version: str) -> dict:
     try:
         c = get_http_client()
+        if version.strip().lower() in ("", "latest", "auto", "*"):
+            # models ask for "latest" — resolve via the metadata endpoint
+            meta = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/json",
+                               headers={"User-Agent": "mcp-codesearch/1.0"})
+            if meta.status_code != 200:
+                return {"success": False, "error": api_error("PyPI", meta)}
+            version = (meta.json().get("info") or {}).get("version", "") or version
         r = await c.get(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200:
@@ -428,6 +435,12 @@ async def npm_get_version(name: str, version: str) -> dict:
     """Get metadata for a specific version of an npm package."""
     try:
         c = get_http_client()
+        if version.strip().lower() in ("", "latest", "auto", "*"):
+            meta = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}",
+                               headers={"User-Agent": "mcp-codesearch/1.0"})
+            if meta.status_code != 200:
+                return {"success": False, "error": api_error("npm", meta)}
+            version = (meta.json().get("dist-tags") or {}).get("latest", "") or version
         r = await c.get(f"https://registry.npmjs.org/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
                         headers={"User-Agent": "mcp-codesearch/1.0"})
         if r.status_code != 200: return {"success": False, "error": api_error("npm version", r)}
@@ -445,6 +458,12 @@ async def crates_get_version(name: str, version: str) -> dict:
     """Get metadata for a specific version of a crate."""
     try:
         c = get_http_client()
+        if version.strip().lower() in ("", "latest", "auto", "*"):
+            meta = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}",
+                headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+            if meta.status_code != 200:
+                return {"success": False, "error": api_error("crates.io", meta)}
+            version = (meta.json().get("crate") or {}).get("max_version", "") or version
         r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}",
             headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("crates.io", r)}

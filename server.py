@@ -180,8 +180,8 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "action": {"type": "string", "enum": ["npm_versions","pypi_versions","crates_versions","npm_dist_tags","pypi_get_version","crates_get_version"], "description": "npm_versions|pypi_versions|crates_versions (list versions), npm_dist_tags, pypi_get_version/crates_get_version (one version). For full metadata use pkg instead."},
-                    "version": {"type": "string", "description": "Package version (required for version-specific queries)"},
+                    "action": {"type": "string", "enum": ["npm_versions","pypi_versions","crates_versions","npm_dist_tags","npm_get_version","pypi_get_version","crates_get_version","crates_get_readme","crates_summary","depsdev_dependencies","depsdev_info","depsdev_advisory","depsdev_query"], "description": "list versions: npm_versions|pypi_versions|crates_versions; one version: npm_get_version|pypi_get_version|crates_get_version (version='latest' OK); npm_dist_tags; crates_get_readme|crates_summary; depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query. Full metadata: use pkg."},
+                    "version": {"type": "string", "description": "Package version (required for version-specific queries; 'latest' resolves to newest)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
                     "hash_value": {"type": "string", "description": "Base64-encoded hash value for depsdev_query"},
@@ -298,11 +298,11 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="papers",
-            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Actions: search, details, batch, citations, references, recommendations, author_search, author_papers, autocomplete, core_search, arxiv_search. search tries S2 then falls back across arXiv/OpenAlex/CORE so one source outage doesn't fail the call. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
+            description="Academic papers from Semantic Scholar, CORE API, and arXiv. Prefer action=search for topic queries (multi-source S2→arXiv→OpenAlex→CORE fallback); arxiv_search is single-source and rate-limited. e.g. papers(query='transformer attention', fields_of_study='Computer Science')",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "arxiv_search"]},
+                    "action": {"type": "string", "enum": ["search", "details", "batch", "citations", "references", "recommendations", "author_search", "author_papers", "autocomplete", "core_search", "author_by_id", "bulk_search", "recommendations_negatives", "arxiv_search"]},
                     "query": {"type": "string"},
                     "paper_id": {"type": "string"},
                     "paper_ids": {"type": "string", "description": "Comma-separated paper IDs for batch action"},
@@ -325,7 +325,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["analyze", "search", "findings", "file_tree", "get_file"], "description": "analyze=repo overview, search=search code, findings=quality issues, file_tree=list files, get_file=read file"},
-                    "repository": {"type": "string", "description": "Git URL of a public remote repository (e.g. https://github.com/expressjs/express)"},
+                    "repository": {"type": "string", "description": "Git URL or owner/repo — REQUIRED for every searchcode action (e.g. https://github.com/expressjs/express)"},
                     "query": {"type": "string", "description": "Search query (for search action)"},
                     "path": {"type": "string", "description": "Subdirectory path filter (for analyze/findings/file_tree)"},
                     "language": {"type": "string", "description": "Language filter (for analyze action)"},
@@ -501,6 +501,8 @@ async def _arxiv_search(query: str, count: int) -> dict:
         params = {"search_query": f"all:{query}", "max_results": count,
                   "sortBy": "relevance", "sortOrder": "descending"}
         resp = await c.get("https://export.arxiv.org/api/query", params=params, timeout=15)
+        if resp.status_code == 429:
+            return {"success": False, "error": "arXiv rate-limited (HTTP 429) — wait ~30s and retry, or use action=search which falls back across S2/arXiv/OpenAlex/CORE"}
         if resp.status_code == 200:
             papers = []
             root = ET.fromstring(resp.content)
@@ -1309,7 +1311,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             if repo and not repo.startswith("http") and "/" in repo:
                 repo = f"https://github.com/{repo}"
             if not repo:
-                return _res({"error": "repository is required for searchcode"}, False)
+                return _res({"error": "repository is required for searchcode — pass repository='https://github.com/owner/repo' or 'owner/repo'. Use action=analyze for a first look at a repo."}, False)
             if action == "analyze":
                 r = await searchcode_analyze(
                     repo, language=str(arguments.get("language", "")),
