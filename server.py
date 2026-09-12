@@ -180,7 +180,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                 "properties": {
                     "name": {"type": "string"},
                     "registry": {"type": "string", "default": "auto"},
-                    "action": {"type": "string", "enum": ["npm_versions","pypi_versions","crates_versions","npm_dist_tags","npm_get_version","pypi_get_version","crates_get_version","crates_get_readme","crates_summary","depsdev_dependencies","depsdev_info","depsdev_advisory","depsdev_query"], "description": "list versions: npm_versions|pypi_versions|crates_versions; one version: npm_get_version|pypi_get_version|crates_get_version (version='latest' OK); npm_dist_tags; crates_get_readme|crates_summary; depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query. Full metadata: use pkg."},
+                    "action": {"type": "string", "enum": ["npm_versions","pypi_versions","crates_versions","npm_dist_tags","npm_get_version","pypi_get_version","crates_get_version","crates_get_readme","crates_summary","depsdev_dependencies","depsdev_info","depsdev_advisory","depsdev_query","npm_time","crates_downloads","crates_reverse_deps","crates_owners","crates_categories","crates_keywords","npm_search","crates_search"], "description": "list versions: npm_versions|pypi_versions|crates_versions; one version: npm_get_version|pypi_get_version|crates_get_version (version='latest' OK); npm_dist_tags; crates_get_readme|crates_summary; depsdev_dependencies|depsdev_info|depsdev_advisory|depsdev_query. Full metadata: use pkg."},
                     "version": {"type": "string", "description": "Package version (required for version-specific queries; 'latest' resolves to newest)"},
                     "advisory_id": {"type": "string", "description": "OSV advisory ID for depsdev_advisory"},
                     "hash_type": {"type": "string", "description": "Hash type for depsdev_query: SHA1, SHA256, etc"},
@@ -250,7 +250,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "languages": {"type": "string"},
                     "licenses": {"type": "string"},
                     "keywords": {"type": "string"},
-                    "action": {"type": "string", "description": "versions|dependencies|dependents|github_repo|github_dependencies|platforms|licenses|keywords"},
+                    "action": {"type": "string", "enum": ["versions","dependencies","dependents","github_repo","github_dependencies","platforms","licenses","keywords"], "description": "versions|dependencies|dependents|github_repo|github_dependencies|platforms|licenses|keywords (omit for project search)"},
                     "version": {"type": "string"},
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
@@ -282,7 +282,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["search", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "rtd_search", "context7_add_repo"], "default": "search"},
+                    "action": {"type": "string", "enum": ["search", "devdocs_search", "devdocs_fetch", "devdocs_fetch_content", "devdocs_list", "devdocs_meta", "devdocs_toc", "rtd_search", "rtd_info", "rtd_versions", "rtd_builds", "rtd_translations", "rtd_subprojects", "context7_add_repo"], "default": "search"},
                     "query": {"type": "string"},
                     "library": {"type": "string"},
                     "library_id": {"type": "string", "description": "Context7 library ID (skip search)"},
