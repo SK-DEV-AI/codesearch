@@ -152,7 +152,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="search_all",
-            description="Unified search across 14+ sources with embedding dedup and reranking. e.g. search_all(query='rust async runtime', language='rust')",
+            description="Unified search across 14+ sources with embedding dedup and reranking. Use for broad multi-source discovery; for surgical single-source work call so_search/hn/papers/code_search directly. e.g. search_all(query='rust async runtime', language='rust')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -219,7 +219,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="hn",
-            description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show). e.g. hn(query='rust', tags='story', min_points=50)",
+            description="Hacker News: search, item detail, user profile, or story lists (top/new/best/ask/show). Use for tech-community discussion and sentiment; for resolved Q&A use so_search. e.g. hn(query='rust', tags='story', min_points=50)",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -239,7 +239,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="search_libraries",
-            description="Libraries.io dependency metadata and source rank. e.g. search_libraries(name='lodash', platform='npm')",
+            description="Libraries.io dependency metadata and source rank. Use to compare dependency candidates or find the repo behind a package; for registry versions/vulns use search_package/pkg/vulns. e.g. search_libraries(name='lodash', platform='npm')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -261,7 +261,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="vulns",
-            description="Sonatype Guide: scan packages, vulnerability details, latest version, or license analysis by PURL. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
+            description="Sonatype Guide: scan packages, vulnerability details, latest version, or license analysis by PURL. scan needs platform+name+version (or coordinates); detail needs vuln_id; latest_version/license need purl. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -431,7 +431,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="analyze",
-            description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Accepts GitHub URLs or owner/repo strings. May take 10-15s (parallel API calls). e.g. analyze(repository='sst/opencode')",
+            description="Deep repo analysis: parallel-fetch GitHub metadata + SearchCode code quality + DeepWiki architecture + CodeWiki sections in one call. Start here for unfamiliar repos before surgical wiki/searchcode calls. Accepts GitHub URLs or owner/repo strings. May take 10-15s (parallel API calls). e.g. analyze(repository='sst/opencode')",
             input_schema={
                 "type": "object",
                 "properties": {
