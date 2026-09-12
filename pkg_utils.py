@@ -147,7 +147,6 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
         async with c.stream("GET", tarball_url, headers={"User-Agent": "mcp-codesearch/1.0"}) as r:
             if r.status_code != 200:
                 return None
-            cache_dir.mkdir(parents=True, exist_ok=True)
             chunks = []
             size = 0
             async for chunk in r.aiter_bytes():
@@ -155,6 +154,10 @@ async def _download_and_extract(registry: str, name: str, version: str) -> str |
                 if size > 50 * 1024 * 1024:
                     return None  # oversize; callers treat None as download-failed
                 chunks.append(chunk)
+            # mkdir AFTER the gate: an early return above must not leave
+            # an empty dir behind — is_dir() is the cache-hit check, so an
+            # empty dir reads as valid cache and lists 0 files forever.
+            cache_dir.mkdir(parents=True, exist_ok=True)
         content = io.BytesIO(b"".join(chunks))
         with tarfile.open(fileobj=content, mode="r:*") as tar:
             first = tar.next()

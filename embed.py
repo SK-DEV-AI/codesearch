@@ -172,8 +172,10 @@ def _hybrid_rank(results: list[dict], query: str, emb_weight: float = 0.4, bm25_
 def _dedup_rank(results: list[dict], query_embed: list[float] | None, sim_threshold: float = 0.85) -> list[dict]:
     if not results:
         return results
+    # any(), not all(): one missing embedding must not demote every other
+    # item to title-only dedup — _dedup_within_cluster handles None per item.
     nv_embeds = [r.get("_embedding") for r in results]
-    has_embeds = query_embed is not None and all(e is not None for e in nv_embeds)
+    has_embeds = query_embed is not None and any(e is not None for e in nv_embeds)
 
     if has_embeds:
         clusters = _cluster_by_source(results)

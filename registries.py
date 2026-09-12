@@ -481,8 +481,25 @@ async def crates_get_readme(name: str, version: str) -> dict:
     """Get README for a specific version of a crate."""
     try:
         c = get_http_client()
-        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/versions/{urllib.parse.quote(version)}/readme",
+        # Same latest-resolution as crates_get_version — /versions/latest/
+        # is a 404, not an alias (schema/handler drift the audit caught).
+        if version.strip().lower() in ("", "latest", "auto", "*"):
+            meta = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}",
+                headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "application/json"})
+            if meta.status_code != 200:
+                return {"success": False, "error": api_error("crates.io", meta)}
+            version = (meta.json().get("crate") or {}).get("max_version", "") or version
+        # Correct shape is /{crate}/{version}/readme (302s to static.crates.io
+        # HTML) — /versions/{v}/readme 404s for EVERY version, not just latest.
+        # Follow the single hop manually: the shared client keeps
+        # follow_redirects off so redirect targets stay SSRF-gated.
+        r = await c.get(f"{CRATES_API}/crates/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/readme",
             headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "text/html"})
+        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+            from security import validate_url
+            target = await validate_url(r.headers["location"])
+            r = await c.get(target,
+                headers={"User-Agent": "mcp-codesearch/1.0", "Accept": "text/html"})
         if r.status_code == 404: return {"success": False, "error": "no readme", "name": name}
         if r.status_code != 200: return {"success": False, "error": api_error("crates.io readme", r)}
         return {"success": True, "readme": r.text[:10000], "name": name}

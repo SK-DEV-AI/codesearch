@@ -287,7 +287,7 @@ async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
             "citationCount": i.get("citationCount",0),
-            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or [])]
+            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or []) if i is not None]
         return {"success": True, "results": results, "queried": len(ids), "returned": len(results)}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}
@@ -307,7 +307,7 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
         results = [{"paperId": i.get("paperId",""), "title": i.get("title",""),
             "year": i.get("year"), "abstract": (i.get("abstract") or "")[:500],
             "citationCount": i.get("citationCount",0),
-            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or [])]
+            "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or []) if i is not None]
         return {"success": True, "results": results}
     except (httpx.HTTPError, ValueError) as e:
         return {"success": False, "error": str(e)}

@@ -109,7 +109,9 @@ async def codewiki_fetch_repo(owner: str, repo: str) -> dict:
     sections_raw = primary[1] if isinstance(primary, list) and len(primary) > 1 and isinstance(primary[1], list) else []
     sections = []
     for item in sections_raw:
-        if not isinstance(item, list):
+        # Empty lists pass isinstance but blow up on item[0]/item[5]
+        # below with an uncaught IndexError (no try in this function).
+        if not isinstance(item, list) or not item:
             continue
         title = item[0] if isinstance(item[0], str) else "Untitled"
         markdown = item[5] if isinstance(item[5], str) else (item[4] if isinstance(item[4], str) else "")

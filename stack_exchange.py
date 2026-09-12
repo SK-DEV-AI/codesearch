@@ -16,6 +16,24 @@ def _sk(params: dict) -> dict:
     return params
 
 
+def _to_epoch(v: str) -> int | None:
+    """SE date filters want Unix epoch, but callers pass ISO/dates.
+    Returns None for unparseable input so we omit instead of 400ing."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    if v.isdigit():
+        return int(v)
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except ValueError:
+        return None
+
+
 async def _fetch_accepted_answer(accepted_id: int, site: str) -> str:
     try:
         c = get_http_client()
@@ -64,10 +82,12 @@ async def search_so(query: str, count: int = 5, tags: str = "",
             params["tagged"] = tags
         if accepted is not None:
             params["accepted"] = "true" if accepted else "false"
-        if fromdate:
-            params["fromdate"] = fromdate
-        if todate:
-            params["todate"] = todate
+        _from = _to_epoch(fromdate) if fromdate else None
+        if _from is not None:
+            params["fromdate"] = _from
+        _to = _to_epoch(todate) if todate else None
+        if _to is not None:
+            params["todate"] = _to
         if closed is not None:
             params["closed"] = "true" if closed else "false"
         if views > 0:

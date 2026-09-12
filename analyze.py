@@ -21,7 +21,8 @@ _GH_URL_RE = re.compile(
 def _parse_repo(input_str: str) -> tuple[str, str] | None:
     m = _GH_URL_RE.match(input_str.strip())
     if m:
-        return m.group(1), m.group(2).rstrip("/").rstrip(".git")
+        # removesuffix, not rstrip: rstrip strips CHARS ("digit" -> "d").
+        return m.group(1), m.group(2).rstrip("/").removesuffix(".git")
     return None
 
 

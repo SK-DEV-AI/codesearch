@@ -13,30 +13,61 @@ _http_client: httpx.AsyncClient | None = None
 _http_client_lock = threading.Lock()
 
 
+class _PoolStream(httpx.AsyncByteStream):
+    """Adapt an httpcore response stream to httpx's stream interface."""
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    async def __aiter__(self):
+        async for chunk in self._stream:
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _PinningTransport(httpx.AsyncBaseTransport):
+    """httpx transport with DNS-rebinding pinning, public APIs only.
+    Replaces the old transport._pool poke (private — silently breaks on
+    httpx upgrades; the M7 assert only caught it, this removes the need)."""
+    def __init__(self, limits: httpx.Limits) -> None:
+        from security import PinningNetworkBackend
+        import httpcore
+        self._pool = httpcore.AsyncConnectionPool(
+            network_backend=PinningNetworkBackend(),
+            max_keepalive_connections=limits.max_keepalive_connections,
+            max_connections=limits.max_connections)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        import httpcore
+        req = httpcore.Request(
+            method=request.method,
+            url=str(request.url),
+            headers=request.headers.multi_items(),
+            content=request.stream,
+            extensions=request.extensions)
+        resp = await self._pool.handle_async_request(req)
+        return httpx.Response(
+            status_code=resp.status,
+            headers=resp.headers,
+            stream=_PoolStream(resp.stream),
+            extensions=resp.extensions)
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
+
+
 def get_http_client() -> httpx.AsyncClient:
     """Return a shared httpx.AsyncClient with connection pooling."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         with _http_client_lock:
             if _http_client is None or _http_client.is_closed:
-                from security import PinningNetworkBackend
-                import httpcore
-                transport = httpx.AsyncHTTPTransport(
-                    limits=httpx.Limits(
-                        max_keepalive_connections=10, max_connections=20))
-                # httpx 0.28 doesn't expose the pool's network_backend;
-                # rebuild its pool with our DNS-rebinding pinning backend
-                transport._pool = httpcore.AsyncConnectionPool(
-                    network_backend=PinningNetworkBackend(),
-                    max_keepalive_connections=10,
-                    max_connections=20)
-                # M7: fail loud if httpx internals shift — never let pinning
-                # degrade silently into an un-validated client.
-                assert hasattr(transport, "_pool"), \
-                    "httpx internals changed; re-wire PinningNetworkBackend"
+                limits = httpx.Limits(
+                    max_keepalive_connections=10, max_connections=20)
                 _http_client = httpx.AsyncClient(
                     timeout=30.0,
-                    transport=transport,
+                    transport=_PinningTransport(limits),
                 )
     return _http_client
 
@@ -118,7 +149,9 @@ REGISTRIES = {
 }
 CRATES_SEARCH = "https://crates.io/api/v1/crates"
 NPM_SEARCH = "https://registry.npmjs.org/-/v1/search"
-DEVDOCS_API = "https://docs.devdocs.io"
+# NOTE: docs.devdocs.io is a dead host (no DNS) — the API lives on the
+# main host (verified live: /docs.json + /{slug}/index.json both 200).
+DEVDOCS_API = "https://devdocs.io"
 TAVILY_SEARCH = "https://api.tavily.com/search"
 HN_API = "https://hn.algolia.com/api/v1"
 
@@ -187,7 +220,10 @@ _cache_lock = asyncio.Lock()
 async def _cached(key: str) -> Any | None:
     async with _cache_lock:
         entry = _cache.get(key)
-        if entry and time.monotonic() - entry[0] < _CACHE_TTL.get(key.split(":")[0], 300):
+        # gh_lang:/gh_topics:/gh_repo:/gh_rel: keys must hit the gh TTL:
+        # split(":")[0] alone yields "gh_lang" (miss -> 300s stale).
+        # NOTE: bare split("_")[0] would break "gh:..." keys, so chain both.
+        if entry and time.monotonic() - entry[0] < _CACHE_TTL.get(key.split(":")[0].split("_")[0], 300):
             return entry[1]
     return None
 

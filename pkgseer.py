@@ -82,7 +82,16 @@ def _parse_spec(spec: str) -> dict[str, str]:
     version = ""
     if ":" in package_name:
         registry, package_name = package_name.split(":", 1)
-    if "@" in package_name and not package_name.startswith("@"):
+    # Scope-aware version split: "@scope/name@1.2.3" starts with @ but
+    # still carries a version — the old guard dropped it (and every scoped
+    # pin broke, with "@1.2.3" glued onto the name).
+    if package_name.startswith("@"):
+        parts = package_name.split("@")
+        if len(parts) >= 2:
+            package_name = "@" + parts[1]
+            if len(parts) >= 3:
+                version = parts[2]
+    elif "@" in package_name:
         package_name, version = package_name.rsplit("@", 1)
     registry_map = {"npm": "NPM", "pypi": "PYPI", "crates": "CRATESIO"}
     reg = registry_map.get(registry.lower())
