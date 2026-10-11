@@ -8,6 +8,6 @@ export SOFA_KEY="YOUR_KEY"
 export LI_KEY="YOUR_KEY"
 export OSS_TOKEN="sonatype_pat_YOUR_TOKEN"
 export TAVILY_KEYS="tvly-dev-YOUR_KEY"
-export FIRECRAWL_KEYS="fc-YOUR_KEY"
-export S2_API_KEY="YOUR_KEY"  # Semantic Scholar: free key at semanticscholar.org/product/api (1 RPS dedicated vs shared anonymous pool)
+export S2_API_KEY="${S2_API_KEY:-}"  # Semantic Scholar: free key at semanticscholar.org/product/api (1 RPS dedicated vs shared anonymous pool)
+export OPENALEX_API_KEY="${OPENALEX_API_KEY:-}"  # OpenAlex: free key at openalex.org (register for higher limits; works without)
 exec /home/sk/.local/share/venvs/mcp/bin/python3 "$(dirname "$0")/server.py" "$@"

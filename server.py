@@ -50,6 +50,8 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
     li_list_platforms, li_list_licenses, li_keyword_projects)
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        analyze_license)
+from sourcegraph import search_sourcegraph
+from scorecard import scorecard_score
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
     readthedocs_translations, readthedocs_subprojects, readthedocs_builds)
 from registries import (search_package, npm_search, crates_search, get_npm_versions,
@@ -80,11 +82,11 @@ Code search, package analysis, documentation, vulnerability scanning.
 
 - **search_all** for broad discovery (multi-source). **analyze** for deep repo understanding.
 - **GitHub data via gh CLI, not this server** — you have authenticated `gh` (SK-DEV-AI) in shell. Prefer it: `gh issue view N -R OWNER/REPO`, `gh pr view N -R OWNER/REPO [--diff]`, `gh repo view OWNER/REPO --json ...`, `gh search code "term" -R OWNER/REPO`, `gh search repos/issues/users/commits`, `gh release list -R OWNER/REPO`, `gh api` for any endpoint (add `--paginate`, filter with `--jq`). gh also does mutations — issues/PRs/comments/releases. The server's github tool is gone; use gh for everything GitHub-specific.
-- **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing.
-- **docs** for API/library docs (Context7→DevDocs→ReadTheDocs). **wiki** for repo architecture Q&A.
-- **papers** for academic research (Semantic Scholar+CORE+arXiv). **so_search** for community Q&A, **hn** for tech discussion.
-- **pkg** for composite package info (Libraries.io+Sonatype+vulns). **search_package** for fast single-registry lookups.
-- **vulns** for vulnerability scanning. **enrich** to fetch+rerank results you already have.
+- **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing (PkgSeer) + global public-code search (Sourcegraph, keyless).
+- **docs** for API/library docs (ReadTheDocs→DevDocs→llms.txt→Context7 — Context7 last to stretch its 1000/mo quota). **wiki** for repo architecture Q&A.
+- **papers** for academic research (Semantic Scholar→arXiv→OpenAlex→CORE fallback, CORE last). **so_search** for community Q&A, **hn** for tech discussion.
+- **pkg** for composite package info (Libraries.io+Sonatype/OSV vulns+Scorecard health). **search_package** for fast single-registry lookups.
+- **vulns** for vulnerability scanning (Sonatype Guide with keyless OSV.dev fallback; GHSA enrichment for CVE/GHSA ids; CISA KEV exploited flags). **enrich** to fetch+rerank results you already have.
 - **trending** for hot repos by language/time (wraps GitHub stars sort).
 
 ## Pipeline (search_all)
@@ -99,7 +101,7 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `synthesize=true`: get a Groq-summarized answer (**only when `GROQ_API_KEYS` env is set** — otherwise it silently no-ops and you get raw results). default on for search_all; off for searchcode/code tools. Set `synthesize=false` for raw results
+- `synthesize=true`: get a Groq-summarized answer (**only when `GROQ_API_KEYS` env is set** — otherwise it silently no-ops and you get raw results). default on for search_all; off for searchcode/code tools. Set `synthesize=false` for raw results. When no GROQ_API_KEYS is configured the server defaults synthesize to off.
 """
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -167,7 +169,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "so_sort": {"type": "string", "default": "votes", "description": "Stack Exchange sort: votes/activity/creation/relevance"},
                     "fromdate": {"type": "string", "description": "Stack Exchange results older than ISO date"},
                     "todate": {"type": "string", "description": "Stack Exchange results newer than ISO date"},
-                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations (no-op without GROQ_API_KEYS)"},
+                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations (no-op without GROQ_API_KEYS; server defaults to false when no keys are configured)"},
                 },
                 "required": ["query"],
             },
@@ -191,11 +193,11 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="so_search",
-            description="Stack Overflow: Stack Exchange API (free, 300 req/min, resolved/accepted answers with score/tags) or SOFA (Stack Overflow for Agents, beta, agent-contributed content with trust scores, requires SOFA_KEY env). Use stackexchange for authoritative resolved answers, sofa for fresher agent-contributed content. e.g. so_search(query='python async', tags='python', accepted=true)",
+            description="Stack Overflow: Stack Exchange API (free, 300 req/day, resolved/accepted answers with score/tags) or SOFA (Stack Overflow for Agents, beta, agent-contributed content with trust scores, requires SOFA_KEY env). Use stackexchange for authoritative resolved answers, sofa for fresher agent-contributed content. e.g. so_search(query='python async', tags='python', accepted=true)",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["stackexchange", "sofa", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers", "users"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/min, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY). questions_by_ids/search_users/search_tags/question_comments/questions/answers/users are Stack Exchange sub-actions"},
+                    "action": {"type": "string", "enum": ["stackexchange", "sofa", "questions_by_ids", "search_users", "search_tags", "question_comments", "questions", "answers", "users"], "default": "stackexchange", "description": "stackexchange=official API (free, 300 req/day, resolved answers, score/tags/views/activity). sofa=Stack Overflow for Agents (beta, agent-contributed, trust scores, needs SOFA_KEY). questions_by_ids/search_users/search_tags/question_comments/questions/answers/users are Stack Exchange sub-actions"},
                     "query": {"type": "string"},
                     "count": {"type": "integer", "default": 5},
                     "tags": {"type": "string"},
@@ -261,7 +263,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="vulns",
-            description="Sonatype Guide: scan packages, vulnerability details, latest version, or license analysis by PURL. scan needs platform+name+version (or coordinates); detail needs vuln_id; latest_version/license need purl. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
+            description="Sonatype Guide + OSV.dev fallback: scan packages, vulnerability details, latest version, or license analysis by PURL. scan needs platform+name+version (or coordinates) — on Sonatype 401/429/quota errors it falls back to keyless OSV.dev automatically. detail accepts Sonatype ids, GHSA-* (GitHub Advisory enrichment), or CVE-* ids. latest_version/license need purl. e.g. vulns(action='scan', name='lodash', version='4.17.20')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -278,7 +280,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="docs",
-            description="Documentation operations. Default action runs smart fallback (Context7→ReadTheDocs→llms.txt→DevDocs). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content. e.g. docs(query='authentication', library='express')",
+            description="Documentation operations. Default action runs smart fallback (ReadTheDocs→DevDocs→llms.txt→Context7, quota-free sources first). After finding docs, use fetch(url) to read full pages or devdocs_fetch_content for structured content. e.g. docs(query='authentication', library='express')",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -344,12 +346,12 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
         ),
         Tool(
             name="code_search",
-            description="Search code, docs, and symbols across indexed dependencies and repositories. Supports qualifiers like kind:, category:, lang:, and package-scoped targets (npm:express, pypi:requests). Powered by PkgSeer. e.g. code_search(query='handleAuth', target='npm:express')",
+            description="Search code, docs, and symbols across indexed dependencies and public repositories. Package scope (npm:express, pypi:requests) via PkgSeer; global public-code search via Sourcegraph (keyless). Supports qualifiers like kind:, category:, lang:. e.g. code_search(query='handleAuth', target='npm:express')",
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query supporting implicit AND, OR, parens, -exclude, and qualifiers (kind:, lang:, path:)"},
-                    "target": {"type": "string", "description": "Package scope: registry:name[@version] (npm:express, pypi:requests, crates:serde). PkgSeer indexes npm/pypi/crates only. For GitHub repos use `searchcode` (repository=URL) or `analyze`."},
+                    "target": {"type": "string", "description": "Package scope: registry:name[@version] (npm:express, pypi:requests, crates:serde). PkgSeer indexes npm/pypi/crates only. Omit target for global public-repo search via Sourcegraph (keyless). For single GitHub repos use `searchcode` (repository=URL) or `analyze`."},
                     "source": {"type": "string", "enum": ["docs", "code", "symbol"], "description": "Restrict results to a specific source type"},
                     "lang": {"type": "string", "description": "Programming language filter"},
                     "limit": {"type": "integer", "default": 10, "description": "Max results (1-100)"},
@@ -744,15 +746,13 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 r = pkg_info
                 if pkg_info.get("success"):
                     try:
-                        from libraries_io import search_libraries_io
                         lib_info = await search_libraries_io(
                             name=pkg_name, platform=pkg_info["registry"])
                         if lib_info.get("success"):
                             r["libraries_io"] = lib_info
-                    except ImportError:
+                    except Exception:
                         pass
                     try:
-                        from oss_index import scan_vulnerabilities
                         # M5: pass the resolved version — version-less PURLs always
                         # return empty from Sonatype Guide, so the count was 0.
                         vname = pkg_name
@@ -761,9 +761,53 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                         vuln_info = await scan_vulnerabilities(
                             platform=pkg_info["registry"], name=vname)
                         if vuln_info.get("success"):
-                            r["vulnerabilities"] = len(
-                                (vuln_info.get("reports") or [{}])[0].get("vulnerabilities", []))
-                    except ImportError:
+                            vulns_list = (vuln_info.get("reports") or [{}])[0].get("vulnerabilities", [])
+                            r["vulnerabilities"] = len(vulns_list)
+                            if vuln_info.get("fallback"):
+                                r["vuln_source"] = vuln_info["fallback"]
+                            # Surface the worst severity + KEV-exploited ids.
+                            sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+                            worst = max(vulns_list,
+                                        key=lambda v: sev_rank.get(str(v.get("severity", "")).lower(), 0),
+                                        default=None)
+                            if worst:
+                                r["worst_severity"] = worst.get("severity", "")
+                            exploited = [v.get("id", "") for v in vulns_list if v.get("exploited")]
+                            if exploited:
+                                r["exploited"] = exploited
+                    except Exception:
+                        pass
+                    try:
+                        # GHSA severity enrichment for the package ecosystem.
+                        from ghsa import ghsa_search as _ghsa_search
+                        eco_map = {"npm": "npm", "pypi": "pip", "crates": "rust"}
+                        eco = eco_map.get(pkg_info["registry"], "")
+                        if eco:
+                            g = await _ghsa_search(ecosystem=eco, count=5)
+                            if g.get("success") and g.get("advisories"):
+                                r["ghsa_recent"] = [
+                                    {"id": a.get("ghsa_id", ""), "cve": a.get("cve_id", ""),
+                                     "severity": a.get("severity", ""),
+                                     "summary": (a.get("summary", "") or "")[:200]}
+                                    for a in g["advisories"][:5]]
+                    except Exception:
+                        pass
+                    try:
+                        # OpenSSF Scorecard health when the package maps to GitHub.
+                        owner = pkg_info.get("repo_owner", "")
+                        repo_name = pkg_info.get("repo_name", "")
+                        if owner and repo_name:
+                            sc = await scorecard_score(owner, repo_name)
+                            if sc.get("success"):
+                                card = sc["scorecard"]
+                                r["scorecard"] = {
+                                    "score": card.get("score", 0),
+                                    "date": card.get("date", ""),
+                                    "checks": [
+                                        {"name": c.get("name", ""), "score": c.get("score", 0)}
+                                        for c in card.get("checks", [])][:10],
+                                }
+                    except Exception:
                         pass
             return _res(r, r.get("success", False))
 
@@ -912,6 +956,53 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 version = str(arguments.get("version", ""))
                 fast = bool(arguments.get("fast", False))
                 library_id = str(arguments.get("library_id", ""))
+                # Quota-free sources first (RTD/DevDocs/llms.txt); Context7 last
+                # (free 1000 calls/mo) unless an explicit library_id pins it.
+                if library_id:
+                    resolved = await context7_resolve(
+                        library if library else query,
+                        version=version, fast=fast, library_id=library_id,
+                    )
+                    if resolved.get("success"):
+                        result = resolved["docs"]
+                        result["resolved_library_id"] = resolved["library"]["id"]
+                        if version:
+                            result["version_pinned"] = version
+                        result["library"] = resolved["library"]
+                        result["source"] = "context7"
+                        if resolved.get("candidates"):
+                            result["candidates"] = resolved["candidates"]
+                        return _res(result)
+                    if resolved.get("candidates"):
+                        return _res({
+                            "success": False,
+                            "source": "context7",
+                            "candidates": resolved["candidates"],
+                            "error": resolved.get("error", "ambiguous library"),
+                            "hint": "Use library_id param to pick the right library",
+                        })
+                rtd = await search_readthedocs(library, query)
+                if rtd.get("success") and rtd.get("results"):
+                    rtd["source"] = "readthedocs"
+                    return _res(rtd)
+                base = library.lower().replace('_', '-').replace(' ', '-')
+                dd = await devdocs_search(base, query)
+                if dd.get("success") and dd.get("results"):
+                    dd["source"] = "devdocs"
+                    return _res(dd)
+                domains = [
+                    f"{base}.dev", f"docs.{base}.io", f"{base}.readthedocs.io",
+                    f"docs.{base}.org", f"{base}.docs.org", f"{base}.docs.dev", f"www.{base}.dev",
+                ]
+                llms_results = await asyncio.gather(
+                    *(search_llms_txt(d, query) for d in domains), return_exceptions=True)
+                llms = next((r for r in llms_results
+                             if isinstance(r, dict) and r.get("success") and r.get("results")), None)
+                if llms:
+                    llms["source"] = "llms.txt"
+                    llms["domain"] = domains[llms_results.index(llms)]
+                if llms and llms.get("success") and llms.get("results"):
+                    return _res(llms)
                 resolved = await context7_resolve(
                     library if library else query,
                     version=version, fast=fast, library_id=library_id,
@@ -934,32 +1025,10 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                         "error": resolved.get("error", "ambiguous library"),
                         "hint": "Use library_id param to pick the right library",
                     })
-                rtd = await search_readthedocs(library, query)
-                if rtd.get("success") and rtd.get("results"):
-                    rtd["source"] = "readthedocs"
-                    return _res(rtd)
-                base = library.lower().replace('_', '-').replace(' ', '-')
-                domains = [
-                    f"{base}.dev", f"docs.{base}.io", f"{base}.readthedocs.io",
-                    f"docs.{base}.org", f"{base}.docs.org", f"{base}.docs.dev", f"www.{base}.dev",
-                ]
-                llms_results = await asyncio.gather(
-                    *(search_llms_txt(d, query) for d in domains), return_exceptions=True)
-                llms = next((r for r in llms_results
-                             if isinstance(r, dict) and r.get("success") and r.get("results")), None)
-                if llms:
-                    llms["source"] = "llms.txt"
-                    llms["domain"] = domains[llms_results.index(llms)]
-                if llms and llms.get("success") and llms.get("results"):
-                    return _res(llms)
-                dd = await devdocs_search(base, query)
-                if dd.get("success") and dd.get("results"):
-                    dd["source"] = "devdocs"
-                    return _res(dd)
                 return _res({
                     "success": False,
                     "source": "none",
-                    "error": f"Could not find docs for '{library}' in context7, readthedocs, or devdocs",
+                    "error": f"Could not find docs for '{library}' in readthedocs, devdocs, llms.txt, or context7",
                     "hint": "Try wiki, or fetch(url) for this library",
                 })
             elif action == "devdocs_list":
@@ -1061,18 +1130,23 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             tasks.append(devdocs_search(lib, query) if lib else devdocs_list_docs())
             task_names.append("devdocs")
 
+            # PkgSeer single-vendor de-risk: keyless Sourcegraph public-code lane.
+            tasks.append(search_sourcegraph(code_q, lang=language or "", count=cnt))
+            task_names.append("sourcegraph")
+
             tasks.append(search_papers(query, cnt, fields_of_study=fields_of_study or None))
             task_names.append("s2_papers")
 
+            tasks.append(search_openalex(query, cnt))
+            task_names.append("openalex")
+
+            # CORE demoted to last papers lane (weakest: token quotas, no citation graph).
             if CORE_API_AVAILABLE:
                 tasks.append(search_core_works(query, cnt))
                 task_names.append("core_papers")
 
             tasks.append(tavily_search(code_q, cnt, include_domains=["github.com", "docs.*", "dev.to", "stackoverflow.com"]))
             task_names.append("tavily")
-
-            tasks.append(search_openalex(query, cnt))
-            task_names.append("openalex")
 
             async def _gather_with_deadline(tks, names, dl):
                 sem = asyncio.Semaphore(15)
@@ -1194,6 +1268,10 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     merged["tavily"] = result.get("results", [])
                     for tr in (result.get("results", []) or []):
                         flat_items.append({"source": "tavily", "title": tr.get("title", ""), "text": tr.get("snippet", ""), "url": tr.get("url", "")})
+                elif name_ == "sourcegraph":
+                    merged["sourcegraph"] = result.get("results", [])
+                    for sr in (result.get("results", []) or []):
+                        flat_items.append({"source": "sourcegraph", "title": sr.get("title", "") or sr.get("file", ""), "text": sr.get("text", ""), "url": sr.get("url", ""), "repo": sr.get("repo", ""), "file": sr.get("file", "")})
 
             query_embed = await _embed([query], "query") if flat_items else None
             query_emb = query_embed[0] if query_embed else None
@@ -1217,7 +1295,14 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 merged["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
                     "Enable with: rm ~/.local/share/reranker-rust/disabled"
 
-            if merged.get("deduped_results") and bool(arguments.get("synthesize", True)):
+            # Groq honesty: default synthesize OFF when no GROQ_API_KEYS — the
+            # old default-True silently no-opped (guard verified). Explicit
+            # synthesize=true without keys returns a clear notice.
+            want_synth = bool(arguments.get("synthesize", _groq_rotator.has_keys))
+            if not _groq_rotator.has_keys and bool(arguments.get("synthesize", False)):
+                merged["synthesis"] = ("synthesis skipped: GROQ_API_KEYS not configured "
+                                        "— returning raw results; set the key or pass synthesize=false")
+            if merged.get("deduped_results") and want_synth:
                 try:
                     top = merged["deduped_results"][:3]
                     ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
@@ -1344,14 +1429,45 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             return _res(r, r.get("success", False))
 
         elif name == "code_search":
-            r = await pkgseer_search(
-                query=str(arguments.get("query", "")),
-                target=str(arguments.get("target", "")),
-                source=str(arguments.get("source", "")),
-                lang=str(arguments.get("lang", "")),
-                limit=int(arguments.get("limit", 10)),
-            )
-            return _res(r, r.get("success", False))
+            query = str(arguments.get("query", ""))
+            target = str(arguments.get("target", ""))
+            source = str(arguments.get("source", ""))
+            lang = str(arguments.get("lang", ""))
+            limit = int(arguments.get("limit", 10))
+            if target:
+                # Package-scoped search via PkgSeer (npm/pypi/crates).
+                r = await pkgseer_search(query=query, target=target,
+                                         source=source, lang=lang, limit=limit)
+                return _res(r, r.get("success", False))
+            # No target: global public-repo search via Sourcegraph (keyless)
+            # + PkgSeer unscoped search when its token is configured.
+            sg_task = search_sourcegraph(query, lang=lang, count=limit)
+            pk_task = pkgseer_search(query=query, source=source,
+                                     lang=lang, limit=limit)
+            sg, pk = await asyncio.gather(sg_task, pk_task,
+                                          return_exceptions=True)
+            sg = {} if isinstance(sg, BaseException) else sg
+            pk = {} if isinstance(pk, BaseException) else pk
+            sg_results = sg.get("results", []) if sg.get("success") else []
+            pk_results = pk.get("results", []) if pk.get("success") else []
+            if source:
+                pk_results = [x for x in pk_results
+                              if str(x.get("source", "")).lower() == source.lower()
+                              or not x.get("source")]
+            if lang:
+                sg_results = [x for x in sg_results
+                              if not x.get("language")
+                              or str(x.get("language", "")).lower() == lang.lower()]
+            combined = sg_results + pk_results
+            if not (sg.get("success") or pk.get("success")):
+                return _res({"success": False,
+                             "error": sg.get("error", "") or pk.get("error", "") or "all code lanes failed",
+                             "lanes": {"sourcegraph": sg.get("error", "ok") if not sg.get("success") else "ok",
+                                         "pkgseer": pk.get("error", "ok") if not pk.get("success") else "ok"}}, False)
+            return _res({"success": True, "results": combined[:limit],
+                         "total": len(combined),
+                         "lanes": {"sourcegraph": len(sg_results),
+                                   "pkgseer": len(pk_results)}}, True)
 
         elif name == "code_files":
             spec = str(arguments.get("spec", ""))

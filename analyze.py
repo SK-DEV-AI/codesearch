@@ -13,6 +13,44 @@ from searchcode import analyze as searchcode_analyze
 from deepwiki import deepwiki_ask
 from codewiki import codewiki_fetch_repo
 
+_GITINGEST_API = "https://gitingest.com/api/ingest"
+_GITINGEST_MAX_BYTES = 500 * 1024  # small-repo fast path: digest under ~500KB
+
+
+async def gitingest_digest(owner: str, repo: str) -> dict:
+    """Fast repo-to-text path via gitingest /api/ingest (keyless).
+
+    Best for small repos: returns tree + full content digest when the
+    content fits the budget. Large repos fall back to digest_url.
+    """
+    try:
+        c = get_http_client()
+        r = await c.post(_GITINGEST_API,
+                         json={"input_text": f"{owner}/{repo}",
+                               "max_file_size": 102400,
+                               "pattern_type": "exclude", "pattern": ""},
+                         timeout=60)
+        if r.status_code != 200:
+            return {"success": False,
+                    "error": f"gitingest HTTP {r.status_code} {r.text[:200]}"}
+        d = r.json()
+        content = d.get("content", "") or ""
+        result: dict[str, Any] = {
+            "success": True,
+            "summary": (d.get("summary", "") or "")[:500],
+            "tree": (d.get("tree", "") or "")[:2000],
+            "digest_url": d.get("digest_url", ""),
+        }
+        if content and len(content) <= _GITINGEST_MAX_BYTES:
+            result["digest"] = content
+        else:
+            result["digest"] = ""
+            result["digest_truncated"] = True
+            result["digest_bytes"] = len(content)
+        return result
+    except Exception as e:
+        return {"success": False, "error": str(e)[:200]}
+
 _GH_URL_RE = re.compile(
     r"(?:https?://(?:www\.)?github\.com/)?([^/\s]+)/([^/\s#?]+)"
 )
@@ -55,6 +93,7 @@ async def analyze_repo(repository: str) -> dict:
         "deepwiki": deepwiki_ask(owner, repo,
                                 f"What is the architecture of {repo}? Describe its structure, modules, and data flow."),
         "codewiki": codewiki_fetch_repo(owner, repo),
+        "gitingest": gitingest_digest(owner, repo),
     }
 
     sem = asyncio.Semaphore(8)
@@ -185,12 +224,29 @@ async def analyze_repo(repository: str) -> dict:
 
     output["architecture"] = arch
 
+    # Repo-to-text fast path (gitingest, keyless). Small repos inline the
+    # digest; large repos expose tree + digest_url.
+    gg_res = results.get("gitingest", {})
+    if isinstance(gg_res, dict) and gg_res.get("success"):
+        output["digest"] = {
+            "summary": gg_res.get("summary", ""),
+            "tree": gg_res.get("tree", ""),
+            "digest_url": gg_res.get("digest_url", ""),
+            "content": gg_res.get("digest", ""),
+            "truncated": bool(gg_res.get("digest_truncated", False)),
+        }
+        if gg_res.get("digest_bytes"):
+            output["digest"]["digest_bytes"] = gg_res["digest_bytes"]
+    else:
+        output["digest"] = None
+
     # Per-source availability
     output["sources"] = {
         "github": bool(repo_res.get("success")),
         "searchcode": bool(isinstance(sc_res, dict) and sc_res.get("success")),
         "deepwiki": bool(isinstance(dw_res, dict) and dw_res.get("success")),
         "codewiki": bool(isinstance(cw_res, dict) and cw_res.get("success")),
+        "gitingest": bool(isinstance(gg_res, dict) and gg_res.get("success")),
     }
 
     return output

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from config import get_http_client, api_error
 
 OPENALEX_API = "https://api.openalex.org"
+OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 
 
 def _abs_text(inverted: dict | None) -> str:
@@ -20,13 +22,17 @@ def _abs_text(inverted: dict | None) -> str:
     return " ".join(words)
 
 
-async def _openalex_get(endpoint: str, params: dict[str, Any]) -> dict:
+async def _openalex_get(endpoint: str, params: dict[str, Any], api_key: str = "") -> dict:
     """Generic OpenAlex GET with error handling."""
+    key = api_key or OPENALEX_API_KEY
+    q = dict(params)
+    if key:
+        q["api_key"] = key
     try:
         c = get_http_client()
         r = await c.get(
             f"{OPENALEX_API}/{endpoint}",
-            params=params,
+            params=q,
             headers={"User-Agent": "mcp-codesearch/1.0"},
             timeout=15,
         )

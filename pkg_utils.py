@@ -321,13 +321,22 @@ async def get_pkg_upgrade_review(name: str, registry: str = "auto",
         tgt_task = asyncio.create_task(scan_vulnerabilities(registry, name, target_version))
         cur_vulns = await cur_task
         tgt_vulns = await tgt_task
-        cur_ids = {v["id"] for v in ((cur_vulns.get("reports") or [{}])[0].get("vulnerabilities", []))} if cur_vulns.get("success") else set()
-        tgt_ids = {v["id"] for v in ((tgt_vulns.get("reports") or [{}])[0].get("vulnerabilities", []))} if tgt_vulns.get("success") else set()
+        cur_list = ((cur_vulns.get("reports") or [{}])[0].get("vulnerabilities", [])) if cur_vulns.get("success") else []
+        tgt_list = ((tgt_vulns.get("reports") or [{}])[0].get("vulnerabilities", [])) if tgt_vulns.get("success") else []
+        cur_ids = {v["id"] for v in cur_list}
+        tgt_ids = {v["id"] for v in tgt_list}
+        # KEV-exploited first: actively-exploited vulns sort above the rest.
+        def _kev_key(v: dict) -> tuple:
+            return (0 if v.get("exploited") else 1, v.get("id", ""))
         results["vulnerabilities"] = {
             "current_count": len(cur_ids), "target_count": len(tgt_ids),
-            "fixed": list(cur_ids - tgt_ids),
-            "added": list(tgt_ids - cur_ids),
-            "still_present": list(cur_ids & tgt_ids),
+            "fixed": sorted(cur_ids - tgt_ids),
+            "added": sorted(tgt_ids - cur_ids),
+            "still_present": sorted(cur_ids & tgt_ids),
+            "still_present_exploited": sorted(
+                [v["id"] for v in tgt_list
+                 if v["id"] in cur_ids and v.get("exploited")]),
+            "target_details": sorted(tgt_list, key=_kev_key),
         }
     except (ImportError, Exception) as e:
         results["vulnerabilities"] = {"error": str(e)}

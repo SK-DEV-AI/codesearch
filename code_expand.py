@@ -23,6 +23,7 @@ async def expand_code_query(query: str) -> list[str]:
 
     Returns [original, variant1, variant2, ...] up to 4 total.
     Skips expansion for exact tokens (function names, error codes, paths).
+    No-op (returns [query]) when GROQ_API_KEYS is not configured.
     """
     stripped = query.strip()
     if not stripped:

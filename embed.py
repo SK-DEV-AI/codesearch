@@ -13,6 +13,8 @@ from config import NV_BASE, NV_EMBED_MODEL, _cached, _set_cache, _KeyRotator, ge
 
 logger = logging.getLogger("embed")
 
+_EMBED_BATCH = 50
+
 _nv_rotator = _KeyRotator("NV_KEY")
 _next_nv_key = _nv_rotator.next
 
@@ -31,22 +33,26 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
         else:
             uncached.append(t)
             uncached_idx.append(i)
-    if uncached:
+    # Chunk at ~50 texts/call: a whole uncached list in one NV POST can
+    # oversize the request on large enrich batches.
+    for start in range(0, len(uncached), _EMBED_BATCH):
+        batch = uncached[start:start + _EMBED_BATCH]
+        batch_idx = uncached_idx[start:start + _EMBED_BATCH]
         nv_key = await _next_nv_key()
         try:
             c = get_http_client()
             r = await c.post(f"{NV_BASE}/embeddings", json={
-                "model": NV_EMBED_MODEL, "input": uncached, "input_type": input_type, "encoding_format": "float",
+                "model": NV_EMBED_MODEL, "input": batch, "input_type": input_type, "encoding_format": "float",
                 "truncate": "END",
             }, headers={"Authorization": f"Bearer {nv_key}"})
             if r.status_code == 200:
                 data = r.json()
-                for idx, row in zip(range(len(uncached)), data.get("data", [])):
+                for idx, row in zip(range(len(batch)), data.get("data", [])):
                     emb = row.get("embedding")
                     if emb:
-                        orig_idx = uncached_idx[idx]
+                        orig_idx = batch_idx[idx]
                         results[orig_idx] = emb
-                        await _set_cache(f"emb:{input_type}:{hashlib.sha256(uncached[idx].encode()).hexdigest()}", emb)
+                        await _set_cache(f"emb:{input_type}:{hashlib.sha256(batch[idx].encode()).hexdigest()}", emb)
         except (httpx.HTTPError, ValueError, KeyError) as e:
             logger.warning("embed failed: %s", e)
     if not any(e is not None for e in results):

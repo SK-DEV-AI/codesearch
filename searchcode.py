@@ -16,6 +16,7 @@ Unique tools vs PkgSeer:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -25,29 +26,45 @@ from config import get_http_client
 _API = "https://api.searchcode.com/api/v1"
 _CLIENT = "opencode-codesearch"
 _TIMEOUT = 30
+_RETRIES = 3
+
+
+def _retry_after(resp: httpx.Response, attempt: int) -> float:
+    """E5: honor Retry-After on 429, else exponential backoff (mirrors _s2_backoff)."""
+    try:
+        retry_after = float(resp.headers.get("retry-after", "0"))
+    except (ValueError, TypeError):
+        retry_after = 0
+    return min(max(2 ** attempt, retry_after), 30)
 
 
 async def _call(endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
     """POST to a SearchCode API endpoint and return the JSON response."""
     url = f"{_API}/{endpoint}?client={_CLIENT}"
-    try:
-        resp = await get_http_client().post(url, json=body, timeout=_TIMEOUT)
-    except httpx.TimeoutException:
-        return {"success": False, "error": f"SearchCode {endpoint} timed out"}
-    except httpx.RequestError as e:
-        return {"success": False, "error": f"SearchCode request failed: {e}"}
-    if resp.status_code == 404:
-        return {"success": False, "error": "Repository or file not found"}
-    if resp.status_code == 429:
-        return {"success": False, "error": "SearchCode rate limited (429)"}
-    if resp.status_code >= 400:
-        body = " ".join((resp.text or "").split())[:250]
-        return {"success": False, "error": f"SearchCode error ({resp.status_code}) {body}".rstrip()}
-    try:
-        data = resp.json()
-    except Exception as e:
-        return {"success": False, "error": f"SearchCode JSON parse error: {e}"}
-    return {"success": True, "data": data}
+    for attempt in range(_RETRIES):
+        try:
+            resp = await get_http_client().post(url, json=body, timeout=_TIMEOUT)
+        except httpx.TimeoutException:
+            return {"success": False, "error": f"SearchCode {endpoint} timed out"}
+        except httpx.RequestError as e:
+            return {"success": False, "error": f"SearchCode request failed: {e}"}
+        if resp.status_code == 404:
+            return {"success": False, "error": "Repository or file not found"}
+        if resp.status_code == 429:
+            if attempt < _RETRIES - 1:
+                await asyncio.sleep(_retry_after(resp, attempt))
+                continue
+            return {"success": False,
+                    "error": "SearchCode rate limited (429 after 3 retries)"}
+        if resp.status_code >= 400:
+            err_body = " ".join((resp.text or "").split())[:250]
+            return {"success": False, "error": f"SearchCode error ({resp.status_code}) {err_body}".rstrip()}
+        try:
+            data = resp.json()
+        except Exception as e:
+            return {"success": False, "error": f"SearchCode JSON parse error: {e}"}
+        return {"success": True, "data": data}
+    return {"success": False, "error": "SearchCode request failed"}
 
 
 async def analyze(repository: str, language: str = "", path: str = "", detail_level: str = "summary") -> dict[str, Any]:
