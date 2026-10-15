@@ -7,6 +7,30 @@ from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank, fallback_sort, killswitch_active
 from security import SecurityError, safe_fetch, safe_stream, validate_url as _validate_url
 
+# JS-shell markers: a page that fetched "successfully" but is really an empty
+# JS app shell (needs a browser to render). codesearch has no CDP/browser by
+# design (websearch owns port 9222) — flag it honestly instead of feeding the
+# shell to ranking as if it were content.
+_SHELL_MARKERS = ("__NEXT_DATA__", "gtm.start", "__NUXT__", "id=\"root\"", "id='root'")
+
+
+def _is_js_shell(body: bytes) -> bool:
+    """True when the body looks like an unrendered JS app shell: tiny text
+    with app-bootstrap markers in the head. Same signal websearch uses to
+    escalate to CDP (raw_html[:2000] marker check)."""
+    if len(body) > 20000:
+        return False
+    try:
+        head = body[:2000].decode("utf-8", errors="replace")
+        text = body.decode("utf-8", errors="replace")
+    except Exception:
+        return False
+    # strip tags crudely: if visible text is tiny but markers present, shell
+    import re as _re
+    visible = _re.sub(r"<[^>]+>", " ", text)
+    visible = _re.sub(r"\s+", " ", visible).strip()
+    return len(visible) < 500 and any(m in head for m in _SHELL_MARKERS)
+
 
 async def enrich_results(
     query: str,
@@ -43,6 +67,11 @@ async def enrich_results(
                 body = await safe_stream(
                     fetcher, url, max_bytes=100000 if include_html else 50000,
                     timeout=10)
+                if _is_js_shell(body):
+                    # Not a fetch failure — the page needs a browser (websearch
+                    # fetch renders via CDP). Flag it so callers know.
+                    r["__fetch_error"] = ("js-shell: page needs browser rendering "
+                        "(use websearch fetch); plain-HTTP body kept in full_content")
                 r["full_content"] = body.decode("utf-8", errors="replace")
             except Exception as e:
                 r["__fetch_error"] = f"{type(e).__name__}: {str(e)[:80]}"
