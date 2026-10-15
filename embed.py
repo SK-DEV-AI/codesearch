@@ -26,7 +26,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
     uncached = []
     uncached_idx = []
     for i, t in enumerate(texts):
-        k = f"emb:{input_type}:{hashlib.sha256(t.encode()).hexdigest()}"
+        k = f"emb:{NV_EMBED_MODEL}:{input_type}:{hashlib.sha256(t.encode()).hexdigest()}"
         c = await _cached(k)
         if c is not None:
             results[i] = c
@@ -52,7 +52,7 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                     if emb:
                         orig_idx = batch_idx[idx]
                         results[orig_idx] = emb
-                        await _set_cache(f"emb:{input_type}:{hashlib.sha256(batch[idx].encode()).hexdigest()}", emb)
+                        await _set_cache(f"emb:{NV_EMBED_MODEL}:{input_type}:{hashlib.sha256(batch[idx].encode()).hexdigest()}", emb)
         except (httpx.HTTPError, ValueError, KeyError) as e:
             logger.warning("embed failed: %s", e)
     if not any(e is not None for e in results):

@@ -119,13 +119,16 @@ GH_SEARCH_ISSUES = "https://api.github.com/search/issues"
 GH_API = "https://api.github.com"
 NV_KEY = os.environ.get("NV_KEY", "")
 NV_BASE = "https://integrate.api.nvidia.com/v1"
-NV_EMBED_MODEL = "nvidia/nv-embedcode-7b-v1"
+# NOTE 2026-10-15: nv-embedcode-7b-v1 went 410 Gone (EOL 2026-08-25) like the
+# websearch model. Unified on nemotron-3-embed-1b (200 live, general text).
+# Code-tuned split is gone until Nvidia ships a code-embed successor.
+NV_EMBED_MODEL = "nvidia/nemotron-3-embed-1b"
 # Reranker model override (parity with websearch `run`). Currently advisory:
 # the Rust worker bakes its model at compile time and ignores this env, but
 # keeping the knob aligned means a future env-aware worker needs no config
 # change on this side.
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "Alibaba-NLP/gte-reranker-modernbert-base")
-NV_EMBED_DIMS = 4096
+NV_EMBED_DIMS = 2048
 SO_API = "https://api.stackexchange.com/2.3"
 SE_API_KEY = os.environ.get("SE_API_KEY", "")
 SOFA_KEY = os.environ.get("SOFA_KEY", "")
