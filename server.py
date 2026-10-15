@@ -51,6 +51,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        analyze_license)
 from ghsa import ghsa_search as _ghsa_search
+from grep_mcp import grep_mcp_search
 from sourcegraph import search_sourcegraph
 from scorecard import scorecard_score
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
@@ -1438,15 +1439,27 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 r = await pkgseer_search(query=query, target=target,
                                          source=source, lang=lang, limit=limit)
                 return _res(r, r.get("success", False))
-            # No target: global public-repo search via Sourcegraph (keyless)
-            # + PkgSeer unscoped search when its token is configured.
+            # No target: global public-repo search. grep.app MCP is primary
+            # (keyless, <1s, bypasses the REST bot-wall); Sourcegraph second;
+            # PkgSeer unscoped when its token is configured.
+            gm_task = grep_mcp_search(query, language=[lang] if lang else None,
+                                      timeout=30)
             sg_task = search_sourcegraph(query, lang=lang, count=limit)
             pk_task = pkgseer_search(query=query, source=source,
                                      lang=lang, limit=limit)
-            sg, pk = await asyncio.gather(sg_task, pk_task,
-                                          return_exceptions=True)
+            gm, sg, pk = await asyncio.gather(gm_task, sg_task, pk_task,
+                                              return_exceptions=True)
+            gm = {} if isinstance(gm, BaseException) else gm
             sg = {} if isinstance(sg, BaseException) else sg
             pk = {} if isinstance(pk, BaseException) else pk
+            gm_results = [{"source": "grep-mcp", "repo": h.get("repo", ""),
+                           "file": h.get("file", ""), "url": h.get("url", ""),
+                           "title": f"{h.get('repo', '')}: {h.get('file', '')}",
+                           "matches": h.get("matches", []),
+                           "text": "; ".join(m.get("preview", "")
+                                             for m in h.get("matches", [])[:3]),
+                           "language": lang or ""}
+                          for h in (gm.get("hits", []) if gm.get("success") else [])]
             sg_results = sg.get("results", []) if sg.get("success") else []
             pk_results = pk.get("results", []) if pk.get("success") else []
             if source:
@@ -1457,15 +1470,17 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 sg_results = [x for x in sg_results
                               if not x.get("language")
                               or str(x.get("language", "")).lower() == lang.lower()]
-            combined = sg_results + pk_results
-            if not (sg.get("success") or pk.get("success")):
+            combined = gm_results + sg_results + pk_results
+            if not (gm.get("success") or sg.get("success") or pk.get("success")):
                 return _res({"success": False,
-                             "error": sg.get("error", "") or pk.get("error", "") or "all code lanes failed",
-                             "lanes": {"sourcegraph": sg.get("error", "ok") if not sg.get("success") else "ok",
+                             "error": gm.get("error", "") or sg.get("error", "") or pk.get("error", "") or "all code lanes failed",
+                             "lanes": {"grep-mcp": gm.get("error", "ok") if not gm.get("success") else "ok",
+                                         "sourcegraph": sg.get("error", "ok") if not sg.get("success") else "ok",
                                          "pkgseer": pk.get("error", "ok") if not pk.get("success") else "ok"}}, False)
             return _res({"success": True, "results": combined[:limit],
                          "total": len(combined),
-                         "lanes": {"sourcegraph": len(sg_results),
+                         "lanes": {"grep-mcp": len(gm_results),
+                                   "sourcegraph": len(sg_results),
                                    "pkgseer": len(pk_results)}}, True)
 
         elif name == "code_files":
