@@ -50,6 +50,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
     li_list_platforms, li_list_licenses, li_keyword_projects)
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        analyze_license)
+from ghsa import ghsa_search as _ghsa_search
 from sourcegraph import search_sourcegraph
 from scorecard import scorecard_score
 from readthedocs import (search_readthedocs, readthedocs_project_info, readthedocs_versions,
@@ -604,7 +605,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
 
     try:
         if name == "ping":
-            from config import get_http_client
             c = get_http_client()
             results = {}
             for target, url in [("cloudflare", "https://1.1.1.1"), ("google", "https://www.google.com"), ("github", "https://api.github.com")]:
@@ -779,7 +779,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                         pass
                     try:
                         # GHSA severity enrichment for the package ecosystem.
-                        from ghsa import ghsa_search as _ghsa_search
                         eco_map = {"npm": "npm", "pypi": "pip", "crates": "rust"}
                         eco = eco_map.get(pkg_info["registry"], "")
                         if eco:
