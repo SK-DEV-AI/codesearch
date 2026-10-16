@@ -1,6 +1,6 @@
 # codesearch API keys — status, quirks, unfixable nuances
 
-Last verified: 2026-10-15. Live values live in `run` (gitignored). This file
+Last verified: 2026-10-16. Live values live in `run` (gitignored). This file
 documents BEHAVIOR only, never values. Placeholders in `run.example`.
 
 ## Key table
@@ -9,7 +9,7 @@ documents BEHAVIOR only, never values. Placeholders in `run.example`.
 |---|---|---|---|
 | `GITHUB_TOKEN` | Recommended | Yes (2 keys) | Anonymous 60/hr vs 5000/hr core. GHSA enrichment + code-search-bucket ops need it. Never route code search through GH (10/min bucket, auth-required). |
 | `CONTEXT7_API_KEY` | No | Yes (2 keys) | Context7 lane 401s/degrades. Free tier cut to 1000 calls/mo Jan 2026 + 60/hr throttle — docs fallback now tries RTD/DevDocs/llms.txt FIRST to stretch quota. |
-| `NV_KEY` | No | Yes | No embeddings → BM25-only hybrid rank. Code model `nv-embedcode-7b-v1` 4096d (deliberately different from websearch's general 1b model — documented, do not "fix"). |
+| `NV_KEY` | No | Yes | No embeddings → BM25-only hybrid rank. Unified 2026-10-15 on `nemotron-3-embed-1b` 2048d (nv-embedcode-7b-v1 410 Gone; code-tuned split ends). Cache keys model-prefixed. |
 | `SOFA_KEY` | No | Yes | `so_search action=sofa` fails; `stackexchange` path unaffected. |
 | `LI_KEY` | No | Yes | Libraries.io 429s faster without. 60 req/min hard limit either way. Data is uncurated scrapes — prefer deps.dev + registries for facts. |
 | `OSS_TOKEN` | No | Yes | Sonatype Guide scan auth. **Most fragile quota: free 500 credits/mo; legacy tokens die 2026-12-31.** OSV.dev fallback (keyless, no limits) fires automatically on 401/403/429/quota text — check `fallback: osv.dev` + `sonatype_error` in output. |
@@ -18,8 +18,8 @@ documents BEHAVIOR only, never values. Placeholders in `run.example`.
 | `SE_API_KEY` | No | Yes (wired + sent) | Keyless 300/day/IP → keyed 10k/day/IP. **Fixed 2026-10-11: `backoff` field now honored** (`_se_get` sleeps per-method deadlines). Schema text corrected to "300 req/day" (was "300 req/min"). |
 | `GITHITS_API_TOKEN` | Effectively yes | Yes | **PkgSeer dead without it** — `code_search`/`code_files`/`code_read` fail. Mitigation is jsDelivr-first (npm) + Sourcegraph lane, not more PkgSeer reliance. |
 | `S2_API_KEY` | No | NOT SET (passthrough only) | Keyless S2 429'd live on 2026-10-11 AND 2026-10-15 (shared-pool contention). Free key = dedicated 1 RPS + batch-500 counts as 1 req. **Register at semanticscholar.org/product/api and export it — highest papers ROI.** Papers fallback (arXiv→OpenAlex→CORE) covers outages, verified live under 429. |
-| `OPENALEX_API_KEY` | No | NOT SET (passthrough only) | Keyless still works but polite-pool retired Feb 2026 (legacy bucket). Free key = 10x budget, sent as `?api_key=`. Register at openalex.org. |
-| `GROQ_API_KEYS` | No | NOT SET | `search_all synthesize` + `code_expand` are **silent no-ops** in prod (`has_keys` guard). Code now defaults `synthesize=false` without keys + returns a clear notice when explicitly requested. Add keys or accept raw results. |
+| `OPENALEX_API_KEY` | No | Yes (user key 2026-10-16) | Was keyless legacy bucket; now keyed 10x budget, sent as `?api_key=`. |
+| `GROQ_API_KEYS` | No | Yes (copied from websearch 2026-10-16) | Was NOT SET → synthesize/code_expand silent no-ops. Now live. Cheap lane `openai/gpt-oss-20b` (llama-3.1-8b retired 404). |
 | `FIRECRAWL_KEYS` | Dead | REMOVED from run.example | Zero `.py` references (verified). Do not re-add. |
 
 ## Unfixable / accept-as-is
