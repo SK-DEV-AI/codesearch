@@ -8,11 +8,16 @@ from typing import Any
 import httpx
 
 from config import CONTEXT7_CONTEXT, CONTEXT7_SEARCH, _KeyRotator, get_http_client, api_error
+from config import _http_request_capped
+from security import safe_fetch_capped, validate_url
 
 logger = logging.getLogger("context7")
 
 _c7_rotator = _KeyRotator("CONTEXT7_API_KEY")
 _next_c7_key = _c7_rotator.next
+
+_MAX_JSON_BYTES = 512 * 1024  # context7 JSON is bounded; cap so a proxy cannot flood RAM
+_MAX_DOC_BYTES = 2_000_000    # llms.txt / doc pages: 2 MiB of text is plenty
 
 
 async def _context7_headers() -> dict[str, str]:
@@ -28,8 +33,9 @@ async def context7_search_lib(query: str, fast: bool = False, page: int = 1, lim
         params: dict[str, Any] = {"libraryName": query, "query": query, "page": page, "limit": limit}
         if fast:
             params["fast"] = "true"
-        c = get_http_client()
-        r = await c.get(CONTEXT7_SEARCH, params=params, headers=await _context7_headers())
+        r = await _http_request_capped("GET", CONTEXT7_SEARCH, params=params,
+                                       headers=await _context7_headers(),
+                                       max_bytes=_MAX_JSON_BYTES)
         if r.status_code != 200:
             logger.warning("context7 search non-200: %s", api_error("context7", r))
             return []
@@ -61,8 +67,9 @@ async def context7_fetch_docs(library_id: str, query: str, fast: bool = False) -
         params: dict[str, Any] = {"libraryId": library_id, "query": query, "type": "json"}
         if fast:
             params["fast"] = "true"
-        c = get_http_client()
-        r = await c.get(CONTEXT7_CONTEXT, params=params, headers=await _context7_headers())
+        r = await _http_request_capped("GET", CONTEXT7_CONTEXT, params=params,
+                                       headers=await _context7_headers(),
+                                       max_bytes=_MAX_JSON_BYTES)
         if r.status_code == 202:
             return {"success": False, "error": "library still processing, retry later"}
         if r.status_code == 301:
@@ -147,15 +154,18 @@ async def context7_resolve(query: str, version: str = "", fast: bool = False, li
 
 async def fetch_llms_txt(url: str) -> dict:
     try:
-        from security import validate_url
         await validate_url(url)
         if not url.endswith("llms.txt"):
             url = url.rstrip("/") + "/llms.txt"
         c = get_http_client()
-        r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
-        if r.status_code != 200:
-            return {"success": False, "error": api_error("", r)}
-        text = r.text
+        meta: dict[str, Any] = {}
+        body_bytes, _trunc = await safe_fetch_capped(
+            c, url, max_bytes=_MAX_DOC_BYTES,
+            headers={"User-Agent": "mcp-codesearch/1.0"},
+            meta_out=meta)
+        if meta.get("status") != 200:
+            return {"success": False, "error": f"HTTP {meta.get('status', '?')}"}
+        text = body_bytes.decode("utf-8", errors="replace")
         links = []
         lines = text.split("\n")
         current_section = ""
@@ -178,13 +188,16 @@ async def fetch_llms_txt(url: str) -> dict:
 
 async def fetch_doc_url(url: str) -> dict:
     try:
-        from security import validate_url
         await validate_url(url)
         c = get_http_client()
-        r = await c.get(url, headers={"User-Agent": "mcp-codesearch/1.0"})
-        if r.status_code != 200:
-            return {"success": False, "error": api_error("", r)}
-        content = r.text
+        meta: dict[str, Any] = {}
+        body_bytes, _trunc = await safe_fetch_capped(
+            c, url, max_bytes=_MAX_DOC_BYTES,
+            headers={"User-Agent": "mcp-codesearch/1.0"},
+            meta_out=meta)
+        if meta.get("status") != 200:
+            return {"success": False, "error": f"HTTP {meta.get('status', '?')}"}
+        content = body_bytes.decode("utf-8", errors="replace")
         try:
             import markdownify
             md = markdownify.markdownify(content, heading_style="ATX")
@@ -221,9 +234,10 @@ async def search_llms_txt(domain: str, query: str) -> dict:
 async def context7_add_repo(provider: str, repo_url: str) -> dict:
     """Submit a repository for Context7 indexing."""
     try:
-        c = get_http_client()
-        r = await c.post(f"https://context7.com/api/v2/add/repo/{provider}",
-            json={"repo_url": repo_url}, headers=await _context7_headers(), timeout=30)
+        r = await _http_request_capped("POST", f"https://context7.com/api/v2/add/repo/{provider}",
+                                       json={"repo_url": repo_url},
+                                       headers=await _context7_headers(),
+                                       timeout=30, max_bytes=_MAX_JSON_BYTES)
         if r.status_code != 200:
             return {"success": False, "error": api_error("Context7 add_repo", r)}
         d = r.json()

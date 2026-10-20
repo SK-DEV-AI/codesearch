@@ -194,6 +194,65 @@ async def _http_request(method: str, url: str, **kwargs) -> httpx.Response:
     raise last_err or RuntimeError("HTTP request failed after retries")
 
 
+async def _http_request_capped(method: str, url: str, *, max_bytes: int = 524_288,
+                               **kwargs) -> httpx.Response:
+    """HTTP request with a hard byte cap on the response body.
+
+    Streams the response and aborts the download as soon as max_bytes are
+    read, so a hostile or oversized endpoint can never buffer an unbounded
+    body in RAM. Retries on transient failures like _http_request does.
+
+    The returned response is a synthetic httpx.Response carrying the capped
+    body — content-encoding/content-length headers are dropped because the
+    body is already decoded. Reading .text/.json() on it is safe: the body
+    is at most max_bytes long.
+    """
+    retries = kwargs.pop("retries", 2)
+    timeout = kwargs.pop("timeout", 30.0)
+    kwargs.setdefault("follow_redirects", True)
+    last_err: Exception | None = None
+    c = get_http_client()
+    for attempt in range(retries + 1):
+        try:
+            async with c.stream(method, url, timeout=timeout, **kwargs) as resp:
+                body = bytearray()
+                truncated = False
+                async for chunk in resp.aiter_bytes():
+                    room = max_bytes - len(body)
+                    if room <= 0:
+                        truncated = True
+                        break
+                    if len(chunk) > room:
+                        body += chunk[:room]
+                        truncated = True
+                        break
+                    body += chunk
+                if resp.status_code >= 500 and attempt < retries:
+                    last_err = httpx.HTTPStatusError(
+                        f"HTTP {resp.status_code}", request=resp.request, response=resp)
+                    await asyncio.sleep(1 * (attempt + 1))
+                    continue
+                headers = {k: v for k, v in resp.headers.items()
+                           if k.lower() not in ("content-encoding", "content-length")}
+                if truncated:
+                    headers["x-jcode-body-truncated"] = "1"
+                return httpx.Response(
+                    status_code=resp.status_code,
+                    headers=headers,
+                    content=bytes(body),
+                    request=resp.request)
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+            last_err = e
+            if attempt < retries:
+                await asyncio.sleep(1 * (attempt + 1))
+    raise last_err or RuntimeError("HTTP request failed after retries")
+
+
+def body_truncated(r: httpx.Response) -> bool:
+    """True when the response body was cut off by the byte cap."""
+    return r.headers.get("x-jcode-body-truncated") == "1"
+
+
 def api_error(prefix: str, r: httpx.Response, body_chars: int = 250) -> str:
     """Rich error string: status code + reason + truncated body + rate-limit headers."""
     parts = [f"{prefix} HTTP {r.status_code}"]

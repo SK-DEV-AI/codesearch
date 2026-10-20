@@ -11,9 +11,11 @@ from typing import Any
 
 import httpx
 
-from config import GH_API, _cached, _set_cache, _next_gh_key, get_http_client
+from config import GH_API, _cached, _set_cache, _next_gh_key
+from config import _http_request_capped
 
 _TIMEOUT = 15
+_MAX_BYTES = 512 * 1024  # advisory JSON is small; cap so a hostile proxy cannot flood RAM
 
 
 async def _ghsa_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -24,9 +26,9 @@ async def _ghsa_get(path: str, params: dict[str, Any] | None = None) -> dict[str
                    "X-GitHub-Api-Version": "2022-11-28"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
-        c = get_http_client()
-        r = await c.get(f"{GH_API}{path}", params=params or {},
-                        headers=headers, timeout=_TIMEOUT)
+        r = await _http_request_capped("GET", f"{GH_API}{path}",
+                                      params=params or {}, headers=headers,
+                                      timeout=_TIMEOUT, max_bytes=_MAX_BYTES)
         if r.status_code == 404:
             return {"success": False, "error": "Advisory not found"}
         if r.status_code == 401:

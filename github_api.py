@@ -6,9 +6,11 @@ from typing import Any
 
 import httpx
 
-from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request, _next_gh_key, get_http_client, api_error
+from config import GH_API, GH_SEARCH_CODE, GH_SEARCH_ISSUES, GH_SEARCH_REPOS, GH_TOKEN, _cached, _set_cache, _http_request_capped, _next_gh_key, api_error
 
 logger = logging.getLogger("codesearch.github")
+
+_MAX_BYTES = 512 * 1024  # GitHub API payloads are bounded; cap so a proxy cannot flood RAM
 
 
 async def _gh_headers(media_type: str = "github+json") -> dict[str, str]:
@@ -103,10 +105,12 @@ async def search_github(q: str, search_type: str = "code", count: int = 10,
         if order:
             params["order"] = order
         mt = "github.v3.text-match+json" if search_type == "code" else "github+json"
-        r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
+        r = await _http_request_capped("GET", url, params=params, headers=await _gh_headers(mt),
+                                       timeout=15, max_bytes=_MAX_BYTES)
         if r.status_code in (401, 403):
             # Bad/expired key: the retry's _gh_headers call advances to the next key
-            r = await _http_request("GET", url, params=params, headers=await _gh_headers(mt), timeout=15)
+            r = await _http_request_capped("GET", url, params=params, headers=await _gh_headers(mt),
+                                           timeout=15, max_bytes=_MAX_BYTES)
         remaining = r.headers.get("x-ratelimit-remaining")
         if remaining is not None:
             try:
@@ -182,7 +186,9 @@ async def fetch_readme(owner: str, repo: str, branch: str = "") -> dict:
         if branch:
             url += f"?ref={branch}"
         gh_headers = await _gh_headers()
-        r = await _http_request("GET", url, headers={**gh_headers, "Accept": "application/vnd.github.raw"})
+        r = await _http_request_capped("GET", url,
+                                       headers={**gh_headers, "Accept": "application/vnd.github.raw"},
+                                       max_bytes=_MAX_BYTES)
         if r.status_code == 404:
             return {"success": False, "error": "no README found"}
         if r.status_code != 200:
@@ -198,7 +204,8 @@ async def gh_get_languages(owner: str, repo: str) -> dict:
     if cached is not None:
         return cached
     try:
-        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/languages", headers=await _gh_headers())
+        r = await _http_request_capped("GET", f"{GH_API}/repos/{owner}/{repo}/languages",
+                                       headers=await _gh_headers(), max_bytes=_MAX_BYTES)
         if r.status_code != 200:
             return {"success": False, "error": api_error("GitHub", r)}
         result = {"success": True, "languages": r.json()}
@@ -213,8 +220,8 @@ async def gh_get_topics(owner: str, repo: str) -> dict:
         return cached
     try:
         gh_hdrs = await _gh_headers()
-        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/topics",
-                                headers=gh_hdrs)
+        r = await _http_request_capped("GET", f"{GH_API}/repos/{owner}/{repo}/topics",
+                                       headers=gh_hdrs, max_bytes=_MAX_BYTES)
         if r.status_code != 200:
             return {"success": False, "error": api_error("GitHub", r)}
         result = {"success": True, "topics": r.json().get("names", [])}
@@ -229,7 +236,8 @@ async def gh_get_repo(owner: str, repo: str) -> dict:
     if cached is not None:
         return cached
     try:
-        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}", headers=await _gh_headers())
+        r = await _http_request_capped("GET", f"{GH_API}/repos/{owner}/{repo}",
+                                       headers=await _gh_headers(), max_bytes=_MAX_BYTES)
         if r.status_code != 200:
             return {"success": False, "error": api_error("GitHub", r)}
         d = r.json()
@@ -258,8 +266,9 @@ async def gh_get_releases(owner: str, repo: str, count: int = 5) -> dict:
     if cached is not None:
         return cached
     try:
-        r = await _http_request("GET", f"{GH_API}/repos/{owner}/{repo}/releases",
-                                params={"per_page": min(count, 20)}, headers=await _gh_headers())
+        r = await _http_request_capped("GET", f"{GH_API}/repos/{owner}/{repo}/releases",
+                                       params={"per_page": min(count, 20)},
+                                       headers=await _gh_headers(), max_bytes=_MAX_BYTES)
         if r.status_code != 200:
             return {"success": False, "error": api_error("GitHub", r)}
         items = r.json()[:count]

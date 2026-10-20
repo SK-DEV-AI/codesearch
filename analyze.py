@@ -6,7 +6,7 @@ import asyncio
 import re
 from typing import Any
 
-from config import get_http_client
+from config import _http_request_capped
 from github_api import (gh_get_repo, fetch_readme, gh_get_languages,
                          gh_get_releases, gh_get_topics)
 from searchcode import analyze as searchcode_analyze
@@ -15,6 +15,7 @@ from codewiki import codewiki_fetch_repo
 
 _GITINGEST_API = "https://gitingest.com/api/ingest"
 _GITINGEST_MAX_BYTES = 500 * 1024  # small-repo fast path: digest under ~500KB
+_GITINGEST_RESPONSE_MAX_BYTES = 4_000_000  # whole response (tree + digest) capped
 
 
 async def gitingest_digest(owner: str, repo: str) -> dict:
@@ -24,12 +25,12 @@ async def gitingest_digest(owner: str, repo: str) -> dict:
     content fits the budget. Large repos fall back to digest_url.
     """
     try:
-        c = get_http_client()
-        r = await c.post(_GITINGEST_API,
-                         json={"input_text": f"{owner}/{repo}",
-                               "max_file_size": 102400,
-                               "pattern_type": "exclude", "pattern": ""},
-                         timeout=60)
+        r = await _http_request_capped(
+            "POST", _GITINGEST_API,
+            json={"input_text": f"{owner}/{repo}",
+                  "max_file_size": 102400,
+                  "pattern_type": "exclude", "pattern": ""},
+            timeout=60, max_bytes=_GITINGEST_RESPONSE_MAX_BYTES)
         if r.status_code != 200:
             return {"success": False,
                     "error": f"gitingest HTTP {r.status_code} {r.text[:200]}"}
