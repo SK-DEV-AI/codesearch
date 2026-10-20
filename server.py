@@ -51,6 +51,7 @@ from libraries_io import (search_libraries_io, libraries_io_search, get_versions
 from oss_index import (scan_vulnerabilities, get_vulnerability_detail, get_component_latest_version,
                        analyze_license)
 from ghsa import ghsa_search as _ghsa_search
+from nvd import attach_nvd as _attach_nvd
 from grep_mcp import grep_mcp_search
 from sourcegraph import search_sourcegraph
 from scorecard import scorecard_score
@@ -934,7 +935,12 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
         elif name == "vulns":
             action = str(arguments.get("action", ""))
             if action == "detail":
-                r = await get_vulnerability_detail(vuln_id=str(arguments.get("vuln_id", "")))
+                _vid = str(arguments.get("vuln_id", ""))
+                r = await get_vulnerability_detail(vuln_id=_vid)
+                # NVD (NIST) enrichment — additive: adds an `nvd` section and
+                # fills empty fields of `vulnerability`. Never breaks the base
+                # Sonatype/OSV/GHSA result (nvd_enrich swallows all failures).
+                r = await _attach_nvd(r, _vid)
             elif action == "latest_version":
                 r = await get_component_latest_version(purl=str(arguments.get("purl", "")))
             elif action == "license":
