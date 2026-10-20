@@ -8,6 +8,7 @@ Sourcegraph is the global public-code lane.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -16,6 +17,11 @@ from config import get_http_client
 
 _SG_GQL = "https://sourcegraph.com/.api/graphql"
 _TIMEOUT = 30
+
+# Server-side time budget: count:50 blows our 30s timeout and returns
+# nothing (measured 2026-10-20); count:5..count:10 answers in ~2.4s.
+SG_COUNT_MAX = 10
+SG_RETRY_DELAY_S = 2.0
 
 _SEARCH_QUERY = """query($q:String!){
 search(query:$q,version:V3){
@@ -42,7 +48,7 @@ def _build_query(query: str, repo: str = "", lang: str = "",
     # NOTE: no `type:code` filter — it suppresses results on the public
     # endpoint (verified: same query 0 with / 3 without). FileMatch-only
     # extraction keeps the lane code-typed regardless.
-    parts = ["context:global", f"count:{min(max(count, 1), 50)}"]
+    parts = ["context:global", f"count:{min(max(count, 1), SG_COUNT_MAX)}"]
     if repo:
         r = repo.strip().removesuffix(".git").rstrip("/")
         if "github.com/" in r:
@@ -105,35 +111,46 @@ async def search_sourcegraph(query: str, repo: str = "", lang: str = "",
     if not query.strip():
         return {"success": False, "error": "query required"}
     q = _build_query(query, repo, lang, count)
-    try:
-        c = get_http_client()
-        r = await c.post(_SG_GQL,
-                         json={"query": _SEARCH_QUERY,
-                               "variables": {"q": q}},
-                         headers={"Content-Type": "application/json",
-                                  "User-Agent": "mcp-codesearch/1.0"},
-                         timeout=_TIMEOUT)
-        if r.status_code != 200:
-            return {"success": False,
-                    "error": f"Sourcegraph HTTP {r.status_code} {r.text[:200]}"}
+    last_err = "Sourcegraph request failed"
+    for attempt in range(2):
+        if attempt:
+            # One retry with a short backoff — upstream is flaky under load.
+            await asyncio.sleep(SG_RETRY_DELAY_S)
         try:
-            data = r.json()
-        except ValueError as e:
-            return {"success": False,
-                    "error": f"Sourcegraph JSON parse error: {e}"}
-        if isinstance(data, dict) and data.get("errors"):
-            msgs = [e.get("message", str(e))
-                    for e in data["errors"]][:3]
-            return {"success": False,
-                    "error": f"Sourcegraph: {'; '.join(msgs)}"}
-        results = _extract(data)
-        try:
-            total = data["data"]["search"]["results"].get("resultCount", 0)
-        except (KeyError, TypeError):
-            total = len(results)
-        return {"success": True, "results": results,
-                "total": total, "query": q}
-    except httpx.TimeoutException:
-        return {"success": False, "error": "Sourcegraph timed out"}
-    except httpx.RequestError as e:
-        return {"success": False, "error": f"Sourcegraph request failed: {e}"}
+            c = get_http_client()
+            r = await c.post(_SG_GQL,
+                             json={"query": _SEARCH_QUERY,
+                                   "variables": {"q": q}},
+                             headers={"Content-Type": "application/json",
+                                      "User-Agent": "mcp-codesearch/1.0"},
+                             timeout=_TIMEOUT)
+            if r.status_code != 200:
+                last_err = f"Sourcegraph HTTP {r.status_code} {r.text[:200]}"
+                continue
+            try:
+                data = r.json()
+            except ValueError as e:
+                last_err = f"Sourcegraph JSON parse error: {e}"
+                continue
+            if isinstance(data, dict) and data.get("errors"):
+                msgs = [e.get("message", str(e))
+                        for e in data["errors"]][:3]
+                last_err = f"Sourcegraph: {'; '.join(msgs)}"
+                continue
+            results = _extract(data)
+            try:
+                total = data["data"]["search"]["results"].get("resultCount", 0)
+            except (KeyError, TypeError):
+                total = len(results)
+            if results or attempt:
+                return {"success": True, "results": results,
+                        "total": total, "query": q}
+            last_err = "Sourcegraph returned no results"
+            continue
+        except httpx.TimeoutException:
+            last_err = "Sourcegraph timed out"
+            continue
+        except httpx.RequestError as e:
+            last_err = f"Sourcegraph request failed: {e}"
+            continue
+    return {"success": False, "error": last_err}
