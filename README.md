@@ -1,5 +1,7 @@
 # codesearch MCP Server
 
+[![skills.sh](https://skills.sh/b/SK-DEV-AI/skills)](https://skills.sh/SK-DEV-AI/skills) · `npx skills add SK-DEV-AI/skills`
+
 Code, package, docs, and paper search MCP server. Per-package source navigation (npm/PyPI/crates), per-repo intelligence (GitHub URL or owner/repo), Q&A communities, vulnerability data, documentation, and academic papers — with embedding dedup and a local cross-encoder reranker.
 
 ## Tools (17)
@@ -57,3 +59,4 @@ Point your MCP client at `run` (stdio):
 - **Reranker (optional, local):** shared with the websearch server — one cross-encoder worker over a Unix socket. Without it, results return unranked; everything still works.
 - **Caching:** per-source file caches with TTLs; repeat queries are cheap.
 - **Safety:** all user-URL fetches are SSRF-validated (private-IP blocking + redirect-hop revalidation).
+
