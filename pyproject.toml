@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codesearch-mcp"
+version = "1.0.0"
+description = "Code, package, docs and paper search MCP server for AI agents (17 tools)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "SK-DEV-AI" }]
+keywords = ["mcp", "mcp-server", "code-search", "package-search", "documentation", "papers", "vulnerability-scanning", "semantic-scholar"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "httpx==0.28.1",
+    "mcp>=2.0.0",
+    "markdownify>=1.0.0",
+    "packaging>=24.0",
+    "httpcore>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/SK-DEV-AI/codesearch"
+Repository = "https://github.com/SK-DEV-AI/codesearch"
+Issues = "https://github.com/SK-DEV-AI/codesearch/issues"
+
+[project.scripts]
+codesearch-mcp = "server:cli_main"
+
+[tool.setuptools]
+# Flat layout: the server is a set of top-level modules. setuptools' py_modules
+# handles this directly (hatchling's flat-layout support prefixes them with
+# "./" and drops them from the wheel).
+py-modules = ['__init__', 'analyze', 'code_expand', 'codewiki', 'config', 'context7', 'core_api', 'deepwiki', 'depsdev', 'devdocs', 'embed', 'enrich', 'ghsa', 'github_api', 'grep_mcp', 'hackernews', 'kev', 'libraries_io', 'nvd', 'openalex', 'oss_index', 'osv', 'pkg_utils', 'pkgseer', 'readthedocs', 'registries', 'reranker', 'scorecard', 'searchcode', 'security', 'semantic_scholar', 'server', 'sofa', 'sourcegraph', 'stack_exchange', 'tavily_search']
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["requirements.txt", "run.example", "server.json", "glama.json"]

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.SK-DEV-AI/codesearch",
+  "description": "Code, package, docs and paper search MCP server (17 tools): per-package source navigation (npm/PyPI/crates), per-repo intelligence, Q&A communities, vulnerability data (Sonatype Guide with keyless OSV.dev fallback plus NVD CVSS/CWE enrichment), documentation, academic papers, embedding dedup and a local cross-encoder reranker.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/SK-DEV-AI/codesearch",
+    "source": "github",
+    "id": "1278745849"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "sk-dev-ai-codesearch",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GROQ_API_KEYS",
+          "description": "Optional. Groq keys for synthesis and query rewriting.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "TAVILY_KEYS",
+          "description": "Optional. Tavily search lane.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "NV_KEY",
+          "description": "Optional. NVIDIA embeddings for ranking.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "SE_KEY",
+          "description": "Optional. Stack Exchange key (10k/day instead of 300).",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "S2_KEY",
+          "description": "Optional. Semantic Scholar key (1 RPS).",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
