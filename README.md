@@ -13,7 +13,7 @@ Code, package, docs, and paper search MCP server. Per-package source navigation 
 - **search_package** — Raw registry queries: versions, dist-tags, deps.dev graphs, advisories (`version='latest'` OK). For composite intelligence use `pkg`.
 - **pkg** — Composite package intelligence: metadata, changelog, upgrade review (vulns + changelog + deps diff), file list/read.
 - **search_libraries** — Libraries.io metadata and source rank. Compare dependency candidates, find the repo behind a package.
-- **vulns** — Sonatype Guide: `scan` (needs platform+name+version), `detail` (needs vuln_id), `latest_version`/`license` (need purl).
+- **vulns** — Sonatype Guide + keyless OSV.dev fallback: `scan` (needs platform+name+version), `detail` (needs vuln_id; enriched with NVD CVSS/CWE/references), `latest_version`/`license` (need purl).
 - **docs** — Docs with smart fallback (Context7 → ReadTheDocs → llms.txt → DevDocs); then `fetch(url)` or `devdocs_fetch_content` for full pages.
 - **so_search** — Stack Overflow: `stackexchange` (authoritative resolved answers) or `sofa` (fresher agent content, needs `SOFA_KEY`).
 - **hn** — Hacker News discussion and sentiment (search, stories, items, users).
