@@ -54,6 +54,29 @@ Point your MCP client at `run` (stdio):
 | `FIRECRAWL_KEYS` | Firecrawl fallback | Optional |
 | `NV_KEY` | NVIDIA embedding endpoint | Optional |
 
+## Install from PyPI
+
+```bash
+pip install skdev-codesearch-mcp          # core install, small
+pip install skdev-codesearch-mcp[all]     # + browser/OCR/extract extras (multi-GB)
+```
+
+The `codesearch-mcp` console script speaks MCP over stdio:
+
+```json
+{ "codesearch": { "command": "codesearch-mcp" } }
+```
+
+## Docker
+
+```bash
+docker build -t codesearch-mcp .
+docker run --rm -i codesearch-mcp
+```
+
+Keys are passed at run time, never baked in: `-e GROQ_API_KEYS=...`.
+Heavy extras: `docker build --build-arg EXTRAS="[all]" -t codesearch-mcp .`
+
 ## Notes
 
 - **Reranker (optional, local):** shared with the websearch server — one cross-encoder worker over a Unix socket. Without it, results return unranked; everything still works.
