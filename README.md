@@ -2,7 +2,7 @@
 
 `mcp-name: io.github.SK-DEV-AI/codesearch`
 
-[![skills.sh](https://skills.sh/b/SK-DEV-AI/skills)](https://skills.sh/SK-DEV-AI/skills) · `npx skills add SK-DEV-AI/skills`
+Companion agent skills: [`SK-DEV-AI/skills`](https://github.com/SK-DEV-AI/skills) · `npx skills add SK-DEV-AI/skills`
 
 Code, package, docs, and paper search MCP server. Per-package source navigation (npm/PyPI/crates), per-repo intelligence (GitHub URL or owner/repo), Q&A communities, vulnerability data, documentation, and academic papers — with embedding dedup and a local cross-encoder reranker.
 
