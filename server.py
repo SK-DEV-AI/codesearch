@@ -14,9 +14,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
-from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, _KeyRotator, api_error
-
-_groq_rotator = _KeyRotator("GROQ_API_KEYS")
+from config import GH_TOKEN, SOFA_KEY, LI_KEY, close_http_client, get_http_client, api_error
+import llm
 from embed import _embed, _dedup_rank, _hybrid_rank
 from code_expand import expand_code_query
 from context7 import context7_resolve, search_llms_txt, context7_add_repo
@@ -590,6 +589,34 @@ async def _papers_search(query: str, limit: int, year: str = "", fields_of_study
     return {"success": False, "error": "all paper sources failed", "errors": errors}
 
 
+async def _run_synthesis(merged, query, arguments):
+    """Run the optional synthesis step, mutating `merged` in place."""
+    want_synth = bool(arguments.get("synthesize", llm.endpoints() != []))
+    if not llm.endpoints() and bool(arguments.get("synthesize", False)):
+        merged["synthesis"] = ("synthesis skipped: no model endpoint configured "
+                                "— returning raw results; set DISTILL_API_KEY/GROQ_API_KEYS or pass synthesize=false")
+    if merged.get("deduped_results") and want_synth:
+        try:
+            top = merged["deduped_results"][:3]
+            ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
+                             for i, x in enumerate(top))
+            text, _finish, err, _att = await llm.chat(
+                [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
+                 {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
+                max_tokens=256, attempts=2, timeout=15, kind="synthesis", temperature=0.3,
+            )
+            if text:
+                merged["synthesis"] = text
+                merged["synthesis_provider"] = llm.last_provider() or (llm.endpoints()[0]["provider"] if llm.endpoints() else "")
+                merged["synthesis_model"] = llm.last_model() or (llm.endpoints()[0]["model"] if llm.endpoints() else "")
+            elif err:
+                merged["synthesis_error"] = err
+        except Exception as e:  # noqa: BLE001
+            logger.warning("synthesis failed: %s", e)
+            merged["synthesis_error"] = str(e)
+    merged["model_calls"] = llm.counts()
+
+
 async def handle_call_tool(ctx, params) -> CallToolResult:
     name = params.name
     arguments = params.arguments or {}
@@ -1074,6 +1101,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             return _res(r, r.get("success", False))
 
         elif name == "search_all":
+            llm.begin()
             query = str(arguments.get("query", ""))
             library = str(arguments.get("library", ""))
             version = str(arguments.get("version", ""))
@@ -1301,33 +1329,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 merged["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
                     "Enable with: rm ~/.local/share/reranker-rust/disabled"
 
-            # Groq honesty: default synthesize OFF when no GROQ_API_KEYS — the
-            # old default-True silently no-opped (guard verified). Explicit
-            # synthesize=true without keys returns a clear notice.
-            want_synth = bool(arguments.get("synthesize", _groq_rotator.has_keys))
-            if not _groq_rotator.has_keys and bool(arguments.get("synthesize", False)):
-                merged["synthesis"] = ("synthesis skipped: GROQ_API_KEYS not configured "
-                                        "— returning raw results; set the key or pass synthesize=false")
-            if merged.get("deduped_results") and want_synth:
-                try:
-                    top = merged["deduped_results"][:3]
-                    ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
-                                     for i, x in enumerate(top))
-                    if _groq_rotator.has_keys:
-                        _gkey = await _groq_rotator.next()
-                        c = get_http_client()
-                        resp = await c.post(
-                            "https://api.groq.com/openai/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {_gkey}", "Content-Type": "application/json"},
-                            json={"model": "openai/gpt-oss-120b",
-                                  "messages": [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
-                                               {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
-                                  "temperature": 0.3, "max_tokens": 256}, timeout=15)
-                        if resp.status_code == 200:
-                            merged["synthesis"] = resp.json()["choices"][0]["message"]["content"].strip()
-                except Exception as e:
-                    logger.warning("synthesis failed: %s", e)
-                    merged["synthesis_error"] = str(e)
+            await _run_synthesis(merged, query, arguments)
+            merged["model_calls"] = llm.counts()
 
             return _res(merged, bool(merged))
 

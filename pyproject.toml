@@ -40,7 +40,7 @@ codesearch-mcp = "server:cli_main"
 # Flat layout: the server is a set of top-level modules. setuptools' py_modules
 # handles this directly (hatchling's flat-layout support prefixes them with
 # "./" and drops them from the wheel).
-py-modules = ['__init__', 'analyze', 'code_expand', 'codewiki', 'config', 'context7', 'core_api', 'deepwiki', 'depsdev', 'devdocs', 'embed', 'enrich', 'ghsa', 'github_api', 'grep_mcp', 'hackernews', 'kev', 'libraries_io', 'nvd', 'openalex', 'oss_index', 'osv', 'pkg_utils', 'pkgseer', 'readthedocs', 'registries', 'reranker', 'scorecard', 'searchcode', 'security', 'semantic_scholar', 'server', 'sofa', 'sourcegraph', 'stack_exchange', 'tavily_search']
+py-modules = ['__init__', 'analyze', 'code_expand', 'codewiki', 'config', 'context7', 'core_api', 'deepwiki', 'depsdev', 'devdocs', 'embed', 'enrich', 'ghsa', 'github_api', 'grep_mcp', 'hackernews', 'kev', 'libraries_io', 'llm', 'nvd', 'openalex', 'oss_index', 'osv', 'pkg_utils', 'pkgseer', 'readthedocs', 'registries', 'reranker', 'scorecard', 'searchcode', 'security', 'semantic_scholar', 'server', 'sofa', 'sourcegraph', 'stack_exchange', 'tavily_search']
 include-package-data = true
 
 [tool.setuptools.package-data]
