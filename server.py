@@ -78,22 +78,46 @@ from openalex import search_openalex, search_openalex_authors, search_openalex_t
 
 INSTRUCTIONS = """# CodeSearch MCP
 
-Code search, package analysis, documentation, vulnerability scanning.
+Public-data code/package/docs/paper search server. Searches the public internet
+(packages, docs, papers, public repos). NOT a local repo indexer — for your own
+working tree use ripgrep/ast-grep/serena MCPs instead.
 
 ## When to use what
 
-- **search_all** for broad discovery (multi-source). **analyze** for deep repo understanding.
-- **GitHub data via gh CLI, not this server** — you have authenticated `gh` (SK-DEV-AI) in shell. Prefer it: `gh issue view N -R OWNER/REPO`, `gh pr view N -R OWNER/REPO [--diff]`, `gh repo view OWNER/REPO --json ...`, `gh search code "term" -R OWNER/REPO`, `gh search repos/issues/users/commits`, `gh release list -R OWNER/REPO`, `gh api` for any endpoint (add `--paginate`, filter with `--jq`). gh also does mutations — issues/PRs/comments/releases. The server's github tool is gone; use gh for everything GitHub-specific.
-- **searchcode** for per-repo code quality analysis. **code_search/grep/files/read** for per-package source browsing (PkgSeer) + global public-code search (Sourcegraph, keyless).
-- **docs** for API/library docs (ReadTheDocs→DevDocs→llms.txt→Context7 — Context7 last to stretch its 1000/mo quota). **wiki** for repo architecture Q&A.
-- **papers** for academic research (Semantic Scholar→arXiv→OpenAlex→CORE fallback, CORE last). **so_search** for community Q&A, **hn** for tech discussion.
-- **pkg** for composite package info (Libraries.io+Sonatype/OSV vulns+Scorecard health). **search_package** for fast single-registry lookups.
-- **vulns** for vulnerability scanning (Sonatype Guide with keyless OSV.dev fallback; GHSA enrichment for CVE/GHSA ids; CISA KEV exploited flags). **enrich** to fetch+rerank results you already have.
-- **trending** for hot repos by language/time (wraps GitHub stars sort).
+- **search_all** (flagship): broad multi-source discovery (18 lanes) with embedding
+  dedup + hybrid rank + rerank + optional synthesis. Start here for open-ended
+  questions.
+- **analyze**: deep single-repo understanding.
+- GitHub data: search_all includes a github code lane; for issue/PR/repo queries
+  prefer the authenticated `gh` CLI (`gh issue view`, `gh pr view --diff`,
+  `gh search code/repos/issues`). gh also does mutations.
+- **searchcode**: per-repo code quality analysis. **code_search/code_files/code_read**
+  for per-package source browsing (PkgSeer) + global public-code search (Sourcegraph,
+  keyless).
+- **docs**: API/library docs (ReadTheDocs -> DevDocs -> llms.txt -> Context7, Context7
+  last to stretch its 1000/mo quota). **wiki**: repo architecture Q&A.
+- **papers**: academic research (Semantic Scholar -> arXiv -> OpenAlex -> CORE).
+  **so_search**: community Q&A. **hn**: tech discussion.
+- **pkg**: composite package info (Libraries.io + Sonatype/OSV vulns + Scorecard).
+  **search_package**: fast single-registry lookups. **search_libraries**: dependency
+  metadata. **vulns**: vulnerability scanning (Sonatype Guide + keyless OSV.dev
+  fallback; GHSA enrichment; CISA KEV). **enrich**: fetch+rerank results you have.
+- **ping**: connectivity check.
+
+Tool list (17): ping, wiki, search_all, search_package, so_search, hn,
+search_libraries, vulns, docs, papers, searchcode, code_search, code_files,
+code_read, pkg, enrich, analyze.
+
+## Model path (synthesis)
+
+Free-first: local reflection/beam:free route is tried first, Groq (openai/gpt-oss-120b)
+is the fallback. Synthesis works without GROQ_API_KEYS via the local route; with no
+endpoint configured it is skipped and raw results are returned. `model_calls` in the
+response reports what ran. Set synthesize=false for raw results only.
 
 ## Pipeline (search_all)
 
-search_all → multi-source → dedup → hybrid rank → reranker → synthesis (Groq for top 3).
+search_all -> multi-source -> dedup -> hybrid rank -> reranker -> synthesis (free-first).
 
 ## Params
 
@@ -103,7 +127,8 @@ search_all → multi-source → dedup → hybrid rank → reranker → synthesis
 - `accepted=true`: so_search for resolved/verified answers
 - `fields_of_study`: papers domain filter (Computer Science, Physics, etc.)
 - `min_points`/`min_comments`: HN quality floor
-- `synthesize=true`: get a Groq-summarized answer (**only when `GROQ_API_KEYS` env is set** — otherwise it silently no-ops and you get raw results). default on for search_all; off for searchcode/code tools. Set `synthesize=false` for raw results. When no GROQ_API_KEYS is configured the server defaults synthesize to off.
+- `synthesize=true`: get a summarized answer (free-first; no-op only when no endpoint
+  is configured). default on for search_all; off for searchcode/code tools.
 """
 # Query->tag/platform/domain detection helpers for search_all precision
 _SE_TAGS = re.compile(r"(?i)\b(react|typescript|javascript|python|rust|golang?|docker|kubernetes|postgresql|mysql|sql|aws|git|node\.?js|angular|vue|django|flask|fastapi|spring|jvm|scala|kotlin|swift|ruby|rails|php|laravel|lua|c\+\+|csharp|dotnet|unity|unreal|tensorflow|pytorch|jax|linux|bash|shell|nix|nixos|ansible|terraform|graphql|rest|grpc|websocket|redis|mongodb|sqlite|svelte|next\.?js|nuxt|deno|bun)\b")
@@ -171,14 +196,14 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "so_sort": {"type": "string", "default": "votes", "description": "Stack Exchange sort: votes/activity/creation/relevance"},
                     "fromdate": {"type": "string", "description": "Stack Exchange results older than ISO date"},
                     "todate": {"type": "string", "description": "Stack Exchange results newer than ISO date"},
-                    "synthesize": {"type": "boolean", "default": True, "description": "Groq-synthesize top results into a concise answer with citations (no-op without GROQ_API_KEYS; server defaults to false when no keys are configured)"},
+                    "synthesize": {"type": "boolean", "default": True, "description": "Summarize top results into a concise answer with citations (free-first local route, Groq fallback; no-op only when no endpoint is configured)"},
                 },
                 "required": ["query"],
             },
         ),
         Tool(
             name="search_package",
-            description="Raw package registry queries (npm/PyPI/crates + deps.dev). Use for fast single-source lookups. For composite intelligence (Libraries.io + Sonatype vulns), use `pkg` instead. e.g. search_package(name='express', registry='npm')",
+            description="Raw single-registry package queries (npm/PyPI/crates + deps.dev). Use for fast version/dependency lookups on ONE registry. For composite intelligence (Libraries.io + Sonatype/OSV vulns + Scorecard), use `pkg` instead.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1187,7 +1212,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 async def _run(task):
                     async with sem:
                         return await task
-                wrapped = [asyncio.ensure_future(_run(t)) for t in tks]
+                wrapped = [asyncio.create_task(_run(t)) for t in tks]
                 done, pending = await asyncio.wait(wrapped, timeout=dl)
                 for p in pending:
                     p.cancel()
@@ -1222,7 +1247,16 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 else:
                     source_availability[name_] = "failed"
 
-            merged: dict[str, Any] = {"source_availability": source_availability}
+            # "failed" here means "this lane contributed nothing usable" -
+            # timed_out and error: lanes count too, which is the point: ok must
+            # not be true on a partial fan-out the caller cannot see.
+            not_ok = [n for n, st in source_availability.items() if st != "success"]
+            merged: dict[str, Any] = {
+                "source_availability": source_availability,
+                "lanes_total": len(source_availability),
+                "lanes_not_ok": len(not_ok),
+                "lanes_not_ok_names": not_ok,
+            }
             if "success" not in source_availability.values():
                 return _res({"error": "all search sources failed (check source_availability)",
                              "source_availability": source_availability}, False)
@@ -1307,6 +1341,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     for sr in (result.get("results", []) or []):
                         flat_items.append({"source": "sourcegraph", "title": sr.get("title", "") or sr.get("file", ""), "text": sr.get("text", ""), "url": sr.get("url", ""), "repo": sr.get("repo", ""), "file": sr.get("file", "")})
 
+            merged["total_raw"] = len(flat_items)
+
             query_embed = await _embed([query], "query") if flat_items else None
             query_emb = query_embed[0] if query_embed else None
             if query_emb and flat_items:
@@ -1318,7 +1354,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                 deduped = _dedup_rank(flat_items, query_emb)
                 deduped = _hybrid_rank(deduped, query)
                 merged["deduped_results"] = deduped
-                merged["total_raw"] = len(flat_items)
                 merged["total_deduped"] = len(deduped)
             if merged.get("deduped_results"):
                 try:
@@ -1332,7 +1367,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             await _run_synthesis(merged, query, arguments)
             merged["model_calls"] = llm.counts()
 
-            return _res(merged, bool(merged))
+            ok = bool(merged.get("total_raw", 0)) or bool(merged.get("deduped_results"))
+            return _res(merged, ok)
 
         elif name == "papers":
             action = str(arguments.get("action", ""))
@@ -1540,6 +1576,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
         else:
             return _res({"error": f"unknown tool: {name}"}, False)
 
+    except asyncio.CancelledError:
+        raise
     except ValueError as e:
         return _res({"error": str(e)}, False)
     except KeyError as e:
@@ -1550,8 +1588,6 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
         return _res({"error": str(e)}, False)
     except Exception as e:
         return _res({"error": f"{type(e).__name__}: {e}"}, False)
-    except asyncio.CancelledError:
-        raise
     except BaseException as e:
         return _res({"error": f"handler interrupted: {type(e).__name__}"}, False)
 

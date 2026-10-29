@@ -54,7 +54,8 @@ async def _embed(texts: list[str], input_type: str = "passage") -> list[list[flo
                         results[orig_idx] = emb
                         await _set_cache(f"emb:{NV_EMBED_MODEL}:{input_type}:{hashlib.sha256(batch[idx].encode()).hexdigest()}", emb)
         except (httpx.HTTPError, ValueError, KeyError) as e:
-            logger.warning("embed failed: %s", e)
+            logger.warning("embed failed for batch %d-%d (%d texts): %s",
+                           start, start + len(batch) - 1, len(batch), e)
     if not any(e is not None for e in results):
         return None
     return results

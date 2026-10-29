@@ -11,7 +11,7 @@ RTD_API = "https://readthedocs.org/api/v3"
 
 async def search_readthedocs(project: str, query: str, version: str = "",
                              page: int = 1, page_size: int = 10) -> dict:
-    cache_key = f"rtd:{project}:{query}:{version}:{page}"
+    cache_key = f"rtd:{project}:{query}:{version}:{page}:{page_size}"
     cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}

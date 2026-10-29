@@ -278,28 +278,84 @@ def api_error(prefix: str, r: httpx.Response, body_chars: int = 250) -> str:
 
 
 # ── TTL Cache ───────────────────────────────────────────────────────────────
-_cache: dict[str, tuple[float, Any]] = {}
-_MAX_CACHE = 500
+# TTL policy per cache "kind". A call site may pass ttl= explicitly
+# (preferred); otherwise the kind is inferred from the key prefix.
 _CACHE_TTL = {"gh": 120, "c7": 300, "wiki": 600, "pkg": 60, "readme": 600, "emb": 600}
+# Default TTL when no kind matches and no explicit ttl is given.
+_DEFAULT_CACHE_TTL = 300
+_cache: dict[str, tuple[float, float, Any]] = {}  # key -> (stored_at, ttl, value)
+# Running total of _approx_bytes over the stored values, so the byte budget is
+# checked in O(1) instead of re-measuring every entry on every insert.
+_cache_bytes = 0
+_MAX_CACHE = 500
+# Approximate byte budget for the whole cache. 2048-dim embedding vectors are
+# ~16KB each, so 500 of them is ~8MB; bound total at 64MB to leave headroom
+# on a laptop-class box (audit rec #4).
+_MAX_CACHE_BYTES = 64 * 1024 * 1024
+
+
+def _approx_bytes(val: Any) -> int:
+    """Cheap size estimate for cache eviction weighting."""
+    if isinstance(val, list):
+        if val and isinstance(val[0], (int, float)):
+            return len(val) * 8
+        return sum(_approx_bytes(x) for x in val) + 64
+    if isinstance(val, dict):
+        return sum(_approx_bytes(v) for v in val.values()) + len(val) * 32
+    if isinstance(val, str):
+        return len(val)
+    if isinstance(val, (int, float)):
+        return 8
+    return 64
 _cache_lock = asyncio.Lock()
 
 
-async def _cached(key: str) -> Any | None:
+def _ttl_for_key(key: str) -> float:
+    """Infer a TTL from the key prefix (legacy heuristic).
+
+    Compound keys like ``gh_repo:...`` must resolve to the ``gh`` kind, so we
+    split on ':' first, then '_' (``gh_repo`` -> ``gh``). A bare ``split("_")``
+    would break ``gh:...`` keys, hence the chained split.
+    """
+    kind = key.split(":")[0].split("_")[0]
+    return float(_CACHE_TTL.get(kind, _DEFAULT_CACHE_TTL))
+
+
+async def _cached(key: str, ttl: float | None = None) -> Any | None:
+    """Return a cached value if present and not expired.
+
+    `ttl` (seconds) overrides the inferred policy for this key. Pass it at the
+    call site to make the caching policy explicit instead of relying on the
+    prefix heuristic.
+    """
     async with _cache_lock:
         entry = _cache.get(key)
-        # gh_lang:/gh_topics:/gh_repo:/gh_rel: keys must hit the gh TTL:
-        # split(":")[0] alone yields "gh_lang" (miss -> 300s stale).
-        # NOTE: bare split("_")[0] would break "gh:..." keys, so chain both.
-        if entry and time.monotonic() - entry[0] < _CACHE_TTL.get(key.split(":")[0].split("_")[0], 300):
-            return entry[1]
+        if entry is None:
+            return None
+        stored_at, entry_ttl, value = entry
+        effective_ttl = ttl if ttl is not None else entry_ttl
+        if time.monotonic() - stored_at < effective_ttl:
+            return value
     return None
 
 
-async def _set_cache(key: str, val: Any):
+async def _set_cache(key: str, val: Any, ttl: float | None = None):
+    """Store a value, recording the TTL it was stored with.
+
+    `ttl` (seconds) makes the policy explicit at the call site. When omitted we
+    infer from the key prefix (legacy) so existing callers keep working.
+    """
+    global _cache_bytes
     async with _cache_lock:
-        _cache[key] = (time.monotonic(), val)
-        if len(_cache) > _MAX_CACHE:
-            sorted_keys = sorted(_cache, key=lambda k: _cache[k][0])
-            evict_count = max(1, len(sorted_keys) // 4)
-            for k in sorted_keys[:evict_count]:
-                _cache.pop(k, None)
+        effective_ttl = ttl if ttl is not None else _ttl_for_key(key)
+        previous = _cache.get(key)
+        if previous is not None:
+            _cache_bytes -= _approx_bytes(previous[2])
+        _cache[key] = (time.monotonic(), effective_ttl, val)
+        _cache_bytes += _approx_bytes(val)
+        # Evict oldest entries until both the count cap and the byte budget hold.
+        while len(_cache) > _MAX_CACHE or _cache_bytes > _MAX_CACHE_BYTES:
+            if not _cache:
+                break
+            oldest = min(_cache, key=lambda k: _cache[k][0])
+            _cache_bytes -= _approx_bytes(_cache.pop(oldest)[2])

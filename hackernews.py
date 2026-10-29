@@ -15,7 +15,7 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
                     tags: str = "story", min_points: int = 0, min_comments: int = 0,
                     before: int = 0, after: int = 0,
                     page: int = 0, hits_per_page: int = 20) -> dict:
-    cache_key = f"hn:{query}:{count}:{sort_by_date}:{tags}:{min_points}:{min_comments}:{before}:{after}:{page}"
+    cache_key = f"hn:{query}:{count}:{sort_by_date}:{tags}:{min_points}:{min_comments}:{before}:{after}:{page}:{hits_per_page}"
     cached = await _cached(cache_key)
     if cached is not None:
         return {"success": True, "results": cached, "cached": True}
