@@ -1240,8 +1240,15 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     if isinstance(result, asyncio.TimeoutError):
                         source_availability[name_] = "timed_out"
                     else:
-                        # include the message — bare type names hide root causes
-                        source_availability[name_] = f"error: {result}"
+                        # include the message — bare type names hide root causes,
+                        # and some exceptions (httpx read errors, asyncio
+                        # cancellations) stringify to "", which used to surface
+                        # as a bare "error: " with no cause at all.
+                        _msg = str(result).strip()
+                        source_availability[name_] = (
+                            f"error: {type(result).__name__}: {_msg}" if _msg
+                            else f"error: {type(result).__name__} (no message)"
+                        )
                 elif isinstance(result, dict) and result.get("success"):
                     source_availability[name_] = "success"
                 else:
