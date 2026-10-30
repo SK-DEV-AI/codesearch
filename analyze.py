@@ -112,7 +112,7 @@ async def analyze_repo(repository: str) -> dict:
 
     await asyncio.gather(*[_run(n, t) for n, t in tasks.items()])
 
-    output: dict[str, Any] = {"success": True}
+    output: dict[str, Any] = {"success": False}
 
     # Merge repo metadata
     repo_res = results.get("repo", {})
@@ -242,12 +242,15 @@ async def analyze_repo(repository: str) -> dict:
         output["digest"] = None
 
     # Per-source availability
-    output["sources"] = {
+    _sources_map = {
         "github": bool(repo_res.get("success")),
         "searchcode": bool(isinstance(sc_res, dict) and sc_res.get("success")),
         "deepwiki": bool(isinstance(dw_res, dict) and dw_res.get("success")),
         "codewiki": bool(isinstance(cw_res, dict) and cw_res.get("success")),
         "gitingest": bool(isinstance(gg_res, dict) and gg_res.get("success")),
     }
+    output["sources"] = _sources_map
+    output["sources_failed"] = [k for k, v in _sources_map.items() if not v]
+    output["success"] = any(_sources_map.values())
 
     return output

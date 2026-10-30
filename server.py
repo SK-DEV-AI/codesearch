@@ -154,7 +154,7 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
     return ListToolsResult(tools=[
         Tool(
             name="ping",
-            description="Lightweight connectivity check — verifies internet and key API endpoints are reachable. Use before expensive calls when connectivity is uncertain. No params needed. e.g. ping()",
+            description="Lightweight connectivity check — verifies internet and key API endpoints are reachable. Returns success=true only if at least one target is reachable (all_reachable reports whether every target was reachable). Use before expensive calls when connectivity is uncertain. No params needed. e.g. ping()",
             input_schema={
                 "type": "object",
                 "properties": {},
@@ -191,12 +191,13 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
                     "language": {"type": "string"},
-                    "count": {"type": "integer", "default": 10, "description": "Results per source (max 50)"},
+                    "count": {"type": "integer", "default": 5, "description": "Results per source (max 50). Default 5 keeps payload under budget; raise explicitly for depth."},
                     "fields_of_study": {"type": "string", "description": "S2 papers domain filter (default: all fields)"},
                     "so_sort": {"type": "string", "default": "votes", "description": "Stack Exchange sort: votes/activity/creation/relevance"},
                     "fromdate": {"type": "string", "description": "Stack Exchange results older than ISO date"},
                     "todate": {"type": "string", "description": "Stack Exchange results newer than ISO date"},
                     "synthesize": {"type": "boolean", "default": True, "description": "Summarize top results into a concise answer with citations (free-first local route, Groq fallback; no-op only when no endpoint is configured)"},
+                    "compact": {"type": "boolean", "default": False, "description": "Compact mode: top-3 per lane, snippets <=300 chars, fewer sources (payload budget guard). Full capability remains reachable via explicit count/compact=false."},
                 },
                 "required": ["query"],
             },
@@ -453,6 +454,8 @@ async def handle_list_tools(ctx, params) -> ListToolsResult:
                     },
                     "top_k": {"type": "integer", "default": 20, "description": "Max enriched results to return"},
                     "max_fetch_size": {"type": "integer", "default": 50, "description": "Max results to fetch content for"},
+                    "max_urls": {"type": "integer", "default": 5, "description": "Cap on number of URLs fetched (payload budget guard)"},
+                    "max_chars": {"type": "integer", "default": 4000, "description": "Per-URL content char cap; longer content is truncated and flagged"},
                     "include_html": {"type": "boolean", "default": False, "description": "Include raw HTML in content (default strips to text)"},
                 },
                 "required": ["query", "results"],
@@ -614,22 +617,95 @@ async def _papers_search(query: str, limit: int, year: str = "", fields_of_study
     return {"success": False, "error": "all paper sources failed", "errors": errors}
 
 
+def _availability_status(result) -> str:
+    """Classify one search_all lane result into a caller-visible status string.
+
+    Never collapse to a bare "failed": a lane that returned
+    {"success": false, "error": ...} must surface that reason, and an
+    exception that stringifies to "" must still name its type.
+    """
+    if isinstance(result, BaseException):
+        if isinstance(result, asyncio.TimeoutError):
+            return "timed_out"
+        # include the message — bare type names hide root causes, and some
+        # exceptions (httpx read errors, asyncio cancellations) stringify to "".
+        _msg = str(result).strip()
+        return (f"error: {type(result).__name__}: {_msg}" if _msg
+                else f"error: {type(result).__name__} (no message)")
+    if isinstance(result, dict) and result.get("success"):
+        return "success"
+    if isinstance(result, dict):
+        # Propagate the real reason (and any status/code the lane gives).
+        _err = (result.get("error") or result.get("message")
+                or result.get("reason") or "").strip()
+        _extra = ""
+        if result.get("status") is not None:
+            _extra += f" status={result.get('status')}"
+        if result.get("code") is not None:
+            _extra += f" code={result.get('code')}"
+        if _err:
+            _msg = f"{_err}{_extra}".strip()
+            return f"failed: {_msg[:160]}" if len(_msg) > 160 else f"failed: {_msg}"
+        return "failed (no error message)"
+    return "failed"
+
+
 async def _run_synthesis(merged, query, arguments):
     """Run the optional synthesis step, mutating `merged` in place."""
+    PROMPT_VERSION = "codesearch-synthesis-2026-10-30.1"
+    merged.setdefault("synthesis", None)
     want_synth = bool(arguments.get("synthesize", llm.endpoints() != []))
     if not llm.endpoints() and bool(arguments.get("synthesize", False)):
         merged["synthesis"] = ("synthesis skipped: no model endpoint configured "
                                 "— returning raw results; set DISTILL_API_KEY/GROQ_API_KEYS or pass synthesize=false")
+        merged["synthesis_error"] = merged["synthesis"]
+        merged["finish_reason"] = None
+        merged["truncated"] = False
+        merged["sources"] = []
+        merged["prompt_version"] = PROMPT_VERSION
+        merged["sources_used"] = 0
+        merged["engine_answers_used"] = 0
+        merged["sources_dropped_by_pool_cap"] = 0
+        merged["sources_dropped_by_domain_cap"] = 0
+        merged["raw_available_via"] = "search_all(..., synthesize=false)"
+        merged["model_calls"] = llm.counts()
+        return
     if merged.get("deduped_results") and want_synth:
         try:
-            top = merged["deduped_results"][:3]
-            ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:400]}"
+            top = merged["deduped_results"][:8]
+            dropped_pool = max(0, len(merged["deduped_results"]) - len(top))
+            from collections import Counter
+            doms = Counter()
+            for x in top:
+                url = x.get("url", "") or ""
+                domain = url.split("/")[2] if "://" in url else (x.get("source", "") or "")
+                doms[domain] += 1
+            dropped_domain = sum(v - 2 for v in doms.values() if v > 2)
+            ctx = "\n\n".join(f"[{i+1}] (source: {x.get('source','?')}) {x.get('title','')}: {(x.get('text','') or x.get('snippet','') or '')[:1500]}"
                              for i, x in enumerate(top))
-            text, _finish, err, _att = await llm.chat(
+            text, finish, err, _att = await llm.chat(
                 [{"role": "system", "content": "Answer concisely about code/libraries from sources. Use [N] citations like [1][2]."},
                  {"role": "user", "content": f"Query: {query}\n\nSources:\n{ctx}"}],
-                max_tokens=256, attempts=2, timeout=15, kind="synthesis", temperature=0.3,
+                max_tokens=1024, attempts=2, timeout=15, kind="synthesis", temperature=0.0,
             )
+            sources = [{"n": i + 1, "title": x.get("title", "") or x.get("url", ""),
+                        "url": x.get("url", ""),
+                        "kind": "page",
+                        "engine": x.get("engine", "") or x.get("source", "")}
+                       for i, x in enumerate(top)]
+            merged["sources"] = sources
+            merged["finish_reason"] = finish
+            merged["truncated"] = (finish == "length")
+            merged["prompt_version"] = PROMPT_VERSION
+            merged["sources_used"] = len(top)
+            # codesearch has no engine-answer lanes; the field exists so the
+            # payload matches websearch's shape.
+            merged["engine_answers_used"] = 0
+            merged["sources_dropped_by_pool_cap"] = dropped_pool
+            merged["sources_dropped_by_domain_cap"] = dropped_domain
+            merged["raw_available_via"] = "search_all(..., synthesize=false)"
+            merged["temperature"] = 0.0
+            merged["max_tokens"] = 1024
             if text:
                 merged["synthesis"] = text
                 merged["synthesis_provider"] = llm.last_provider() or (llm.endpoints()[0]["provider"] if llm.endpoints() else "")
@@ -639,6 +715,20 @@ async def _run_synthesis(merged, query, arguments):
         except Exception as e:  # noqa: BLE001
             logger.warning("synthesis failed: %s", e)
             merged["synthesis_error"] = str(e)
+            merged["finish_reason"] = None
+            merged["truncated"] = False
+            merged["sources"] = merged.get("sources", [])
+            merged["prompt_version"] = PROMPT_VERSION
+    else:
+        merged.setdefault("sources", [])
+        merged.setdefault("finish_reason", None)
+        merged.setdefault("truncated", False)
+        merged["prompt_version"] = PROMPT_VERSION
+        merged.setdefault("sources_used", 0)
+        merged.setdefault("engine_answers_used", 0)
+        merged.setdefault("sources_dropped_by_pool_cap", 0)
+        merged.setdefault("sources_dropped_by_domain_cap", 0)
+        merged.setdefault("raw_available_via", "search_all(..., synthesize=false)")
     merged["model_calls"] = llm.counts()
 
 
@@ -661,13 +751,19 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
         if name == "ping":
             c = get_http_client()
             results = {}
+            all_reachable = True
+            any_reachable = False
             for target, url in [("cloudflare", "https://1.1.1.1"), ("google", "https://www.google.com"), ("github", "https://api.github.com")]:
                 try:
                     r = await c.get(url, timeout=5)
                     results[target] = {"reachable": True, "status": r.status_code, "ms": int(r.elapsed.total_seconds() * 1000) if hasattr(r, 'elapsed') else None}
+                    any_reachable = True
                 except Exception as e:
                     results[target] = {"reachable": False, "error": str(e)[:60]}
-            return _res({"success": True, "connectivity": results})
+                    all_reachable = False
+            # Honest: success reflects whether any target was reachable.
+            return _res({"success": any_reachable, "all_reachable": all_reachable,
+                         "connectivity": results}, any_reachable)
 
         elif name == "wiki":
             action = str(arguments.get("action", ""))
@@ -1133,7 +1229,10 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             owner = str(arguments.get("owner", ""))
             repo = str(arguments.get("repo", ""))
             language = str(arguments.get("language", ""))
-            cnt = min(max(safe_int(arguments.get("count", 10)), 1), 50)
+            cnt = min(max(safe_int(arguments.get("count", 5)), 1), 50)
+            compact = bool(arguments.get("compact", False))
+            if compact:
+                cnt = min(cnt, 3)
             lib = library or (query.split()[0] if query.strip() else "")
             fields_of_study = str(arguments.get("fields_of_study", "")).strip()
 
@@ -1236,23 +1335,7 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
 
             source_availability: dict[str, str] = {}
             for name_, result in results.items():
-                if isinstance(result, BaseException):
-                    if isinstance(result, asyncio.TimeoutError):
-                        source_availability[name_] = "timed_out"
-                    else:
-                        # include the message — bare type names hide root causes,
-                        # and some exceptions (httpx read errors, asyncio
-                        # cancellations) stringify to "", which used to surface
-                        # as a bare "error: " with no cause at all.
-                        _msg = str(result).strip()
-                        source_availability[name_] = (
-                            f"error: {type(result).__name__}: {_msg}" if _msg
-                            else f"error: {type(result).__name__} (no message)"
-                        )
-                elif isinstance(result, dict) and result.get("success"):
-                    source_availability[name_] = "success"
-                else:
-                    source_availability[name_] = "failed"
+                source_availability[name_] = _availability_status(result)
 
             # "failed" here means "this lane contributed nothing usable" -
             # timed_out and error: lanes count too, which is the point: ok must
@@ -1367,6 +1450,16 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     merged["deduped_results"] = await _rerank(query, merged["deduped_results"], top_k=min(cnt * 2, 50))
                 except Exception as e:
                     logger.warning("reranker failed: %s", e)
+            if compact and merged.get("deduped_results"):
+                trimmed = []
+                for it in merged["deduped_results"][:10]:
+                    it = dict(it)
+                    if "text" in it and isinstance(it["text"], str):
+                        it["text"] = it["text"][:300]
+                    if "snippet" in it and isinstance(it["snippet"], str):
+                        it["snippet"] = it["snippet"][:300]
+                    trimmed.append(it)
+                merged["deduped_results"] = trimmed
             if killswitch_active():
                 merged["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
                     "Enable with: rm ~/.local/share/reranker-rust/disabled"
@@ -1571,7 +1664,9 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             if not raw_results or not isinstance(raw_results, list):
                 return _res({"error": "results must be a non-empty list"}, False)
             r = await enrich_results(query, raw_results, top_k=top_k,
-                                     max_fetch_size=max_fetch, include_html=include_html)
+                                     max_fetch_size=max_fetch, max_urls=int(arguments.get("max_urls", 5)),
+                                     max_chars=int(arguments.get("max_chars", 4000)),
+                                     include_html=include_html)
             return _res(r, r.get("success", False))
 
         elif name == "analyze":

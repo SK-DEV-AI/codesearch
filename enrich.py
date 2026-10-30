@@ -7,7 +7,25 @@ from embed import _embed, _dedup_rank, _hybrid_rank
 from reranker import rerank as _rerank, fallback_sort, killswitch_active
 from security import SecurityError, safe_fetch, safe_stream, validate_url as _validate_url
 
-# JS-shell markers: a page that fetched "successfully" but is really an empty
+def _html_to_text(raw: str) -> str:
+    """Convert HTML to readable text. Prefer trafilatura; fall back to tag stripping."""
+    if "<" not in raw:
+        return raw
+    try:
+        import trafilatura
+        extracted = trafilatura.extract(raw, include_comments=False, include_tables=True,
+                                       output_format="markdown")
+        if extracted and extracted.strip():
+            return extracted
+    except Exception:
+        pass
+    # Fallback: strip tags crudely.
+    import re as _re
+    text = _re.sub(r"<script[^>]*>.*?</script>", " ", raw, flags=_re.S | _re.I)
+    text = _re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=_re.S | _re.I)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    text = _re.sub(r"\s+", " ", text).strip()
+    return text
 # JS app shell (needs a browser to render). codesearch has no CDP/browser by
 # design (websearch owns port 9222) — flag it honestly instead of feeding the
 # shell to ranking as if it were content.
@@ -37,11 +55,19 @@ async def enrich_results(
     results: list[dict],
     top_k: int = 20,
     max_fetch_size: int | None = 50,
+    max_urls: int = 5,
+    max_chars: int = 4000,
     include_html: bool = False,
 ) -> dict:
     """Fetch full content for search results, deduplicate by embedding, rerank by relevance."""
     if not results:
         return {"success": True, "results": [], "reason": "no results to enrich"}
+
+    # Effective fetch cap: honour both legacy max_fetch_size and the new max_urls cap.
+    fetch_cap = len(results)
+    if max_fetch_size is not None:
+        fetch_cap = min(fetch_cap, max(1, int(max_fetch_size)))
+    fetch_cap = min(fetch_cap, max(1, int(max_urls)))
 
     fetcher = get_http_client()
     sem = asyncio.Semaphore(8)
@@ -72,15 +98,20 @@ async def enrich_results(
                     # fetch renders via CDP). Flag it so callers know.
                     r["__fetch_error"] = ("js-shell: page needs browser rendering "
                         "(use websearch fetch); plain-HTTP body kept in full_content")
-                r["full_content"] = body.decode("utf-8", errors="replace")
+                raw = body.decode("utf-8", errors="replace")
+                if include_html:
+                    r["full_content"] = raw
+                    r["__content_is_html"] = True
+                else:
+                    r["full_content"] = _html_to_text(raw)
+                    r["__content_is_html"] = False
             except Exception as e:
                 r["__fetch_error"] = f"{type(e).__name__}: {str(e)[:80]}"
         return r
 
-    limit = max_fetch_size or len(results)
-    fetch_tasks = [asyncio.create_task(_fetch_one(r)) for r in results[:limit]]
+    fetch_tasks = [asyncio.create_task(_fetch_one(r)) for r in results[:fetch_cap]]
     fetched = await asyncio.gather(*fetch_tasks)
-    fetched += results[limit:]
+    fetched += results[fetch_cap:]
 
     # Dedup by NIM embedding
     texts = []
@@ -108,11 +139,19 @@ async def enrich_results(
 
     result_list: list[dict] = []
     for r in reranked:
+        raw_content = (r.get("full_content", "") or r.get("text", "") or "")
+        truncated = len(raw_content) > max_chars
+        content = raw_content[:max_chars]
         entry: dict = {
             "url": r.get("url", ""),
             "title": r.get("title", ""),
-            "content": (r.get("full_content", "") or r.get("text", "") or "")[:10000],
+            "content": content,
+            "truncated": truncated,
         }
+        if include_html or r.get("__content_is_html"):
+            entry["content_is_html"] = True
+        else:
+            entry["content_is_html"] = False
         source = r.get("source") or r.get("engine") or ""
         if source:
             entry["source"] = source
@@ -124,14 +163,23 @@ async def enrich_results(
             entry["relevance_score"] = round(score, 4)
         result_list.append(entry)
 
+    total_fetched = sum(1 for r in fetched if r.get("full_content") and not r.get("__fetch_error"))
+    total_errors = sum(1 for r in fetched if r.get("__fetch_error"))
+    # Honest success: at least one fetch succeeded (or no input). All-failed => false.
+    success = (total_fetched > 0) or (len(results) == 0)
+
     result: dict = {
-        "success": True,
+        "success": success,
         "total_input": len(results),
         "total_enriched": len(result_list),
-        "total_fetched": sum(1 for r in fetched if r.get("full_content") and not r.get("__fetch_error")),
-        "total_errors": sum(1 for r in fetched if r.get("__fetch_error")),
+        "total_fetched": total_fetched,
+        "total_errors": total_errors,
+        "max_chars_per_url": max_chars,
+        "max_urls": fetch_cap,
         "enriched": result_list,
     }
+    if not success and total_errors > 0:
+        result["error"] = "all fetches failed (see fetch_error per entry)"
     if killswitch_active():
         result["reranker"] = "disabled — results are engine-ranked only (not reranked). " \
             "Enable with: rm ~/.local/share/reranker-rust/disabled"
