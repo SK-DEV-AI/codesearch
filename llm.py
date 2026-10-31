@@ -195,7 +195,12 @@ async def _one(ep: dict, messages: list[dict], *, max_tokens: int,
                         json={"model": ep["model"], "messages": messages,
                               "temperature": temperature, "max_tokens": budget})
         except Exception as e:  # noqa: BLE001
-            last = f"{type(e).__name__}: {e}"
+            # An exception with no message (httpx.ReadTimeout) used to render
+            # as "ReadTimeout: " - a dangling colon the caller learns nothing
+            # from. Name the failure instead.
+            detail = str(e).strip()
+            last = (f"{type(e).__name__}: {detail}" if detail
+                    else f"{type(e).__name__} (no message)")
             continue
         if resp.status_code != 200:
             last = f"HTTP {resp.status_code}: {resp.text[:200]}"
@@ -324,6 +329,14 @@ def _selfcheck() -> None:
         check("429 is reported with its status", err.startswith("HTTP 429") and att == 1)
         _t, _f, err, _a = asyncio.run(fail_once(RaisingClient(), ep, 100))
         check("transport error is named", "OSError" in err)
+
+        class SilentTimeout:
+            async def post(self, *a, **kw): raise TimeoutError()
+
+        _t, _f, err, _a = asyncio.run(fail_once(SilentTimeout(), ep, 100))
+        check("a message-less exception is still legible",
+              "TimeoutError" in err and "no message" in err
+              and not err.rstrip().endswith(":"))
 
         class EmptyThenFull:
             def __init__(self): self.budgets = []

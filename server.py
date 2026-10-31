@@ -731,6 +731,9 @@ async def _run_synthesis(merged, query, arguments):
                 merged["synthesis_model"] = llm.last_model() or (llm.endpoints()[0]["model"] if llm.endpoints() else "")
             elif err:
                 merged["synthesis_error"] = err
+                # No text and an error: there is no finish reason to report.
+                merged["finish_reason"] = None
+                merged["truncated"] = False
         except Exception as e:  # noqa: BLE001
             logger.warning("synthesis failed: %s", e)
             merged["synthesis_error"] = str(e)

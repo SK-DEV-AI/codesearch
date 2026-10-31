@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from config import _cached, _set_cache, get_http_client, api_error
+from httpretry import retry_request
 
 HN_ALGOLIA = "https://hn.algolia.com/api/v1"
 HN_FIREBASE = "https://hacker-news.firebaseio.com/v0"
@@ -39,9 +40,11 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
         if filters:
             params["numericFilters"] = ",".join(filters)
         c = get_http_client()
-        r = await c.get(endpoint, params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r, retries = await retry_request(
+            "GET", endpoint, params=params, headers={"User-Agent": "mcp-codesearch/1.0"},
+        )
         if r.status_code != 200:
-            return {"success": False, "error": api_error("Algolia", r)}
+            return {"success": False, "error": api_error("Algolia", r), "retries": retries}
         data = r.json()
         hits = data.get("hits", [])[:count]
         results = []
@@ -57,9 +60,10 @@ async def search_hn(query: str, count: int = 5, sort_by_date: bool = False,
             })
         await _set_cache(cache_key, results)
         return {"success": True, "results": results, "total": data.get("nbHits", 0),
-                "page": data.get("page", 0), "nb_pages": data.get("nbPages", 0)}
+                "page": data.get("page", 0), "nb_pages": data.get("nbPages", 0),
+                "retries": retries}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def hn_get_item(item_id: int) -> dict:

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from config import get_http_client, api_error
+from httpretry import retry_request
 
 S2_API = "https://api.semanticscholar.org/graph/v1"
 S2_SEARCH = f"{S2_API}/paper/search"
@@ -36,6 +37,7 @@ def _s2_headers() -> dict[str, str]:
 
 def _s2_backoff(r: httpx.Response, attempt: int) -> float:
     # S2 sends Retry-After on 429s — honor it, falling back to exp backoff.
+    retries = 0
     try:
         retry_after = float(r.headers.get("retry-after", "0"))
     except (ValueError, TypeError):
@@ -43,28 +45,22 @@ def _s2_backoff(r: httpx.Response, attempt: int) -> float:
     return min(max(2 ** attempt, retry_after), 30)
 
 
-async def _s2_get(url: str, params: dict | None = None, timeout: int = 15) -> httpx.Response:
-    for attempt in range(_S2_RETRIES):
-        c = get_http_client()
-        r = await c.get(url, params=params, headers=_s2_headers(), timeout=timeout)
-        if r.status_code != 429 or attempt == _S2_RETRIES - 1:
-            return r
-        await asyncio.sleep(_s2_backoff(r, attempt))
-    return r
+async def _s2_get(url: str, params: dict | None = None, timeout: int = 15) -> tuple[httpx.Response, int]:
+    r, retries = await retry_request(
+        "GET", url, params=params, headers=_s2_headers(), timeout=timeout,
+    )
+    return r, retries
 
 
 async def _s2_post(url: str, json: dict, params: dict | None = None, timeout: int = 30,
-               extra_headers: dict | None = None) -> httpx.Response:
-    for attempt in range(_S2_RETRIES):
-        c = get_http_client()
-        h = _s2_headers()
-        if extra_headers:
-            h.update(extra_headers)
-        r = await c.post(url, json=json, params=params, headers=h, timeout=timeout)
-        if r.status_code != 429 or attempt == _S2_RETRIES - 1:
-            return r
-        await asyncio.sleep(_s2_backoff(r, attempt))
-    return r
+               extra_headers: dict | None = None) -> tuple[httpx.Response, int]:
+    h = _s2_headers()
+    if extra_headers:
+        h.update(extra_headers)
+    r, retries = await retry_request(
+        "POST", url, json=json, params=params, headers=h, timeout=timeout,
+    )
+    return r, retries
 
 
 def _extract_paper(p: dict) -> dict:
@@ -102,6 +98,7 @@ def _extract_paper(p: dict) -> dict:
 async def search_papers(query: str, limit: int = 10, year: str = "",
                         fields_of_study: str = "", open_access: bool = False,
                         offset: int = 0) -> dict:
+    retries = 0
     try:
         params: dict[str, Any] = {
             "query": query,
@@ -116,9 +113,9 @@ async def search_papers(query: str, limit: int = 10, year: str = "",
             params["openAccessPdf"] = "true"
         if offset:
             params["offset"] = offset
-        r = await _s2_get(S2_SEARCH, params)
+        r, retries = await _s2_get(S2_SEARCH, params)
         if r.status_code != 200:
-            return {"success": False, "error": f"S2 API: {r.status_code} {r.text[:200]}"}
+            return {"success": False, "error": f"S2 API: {r.status_code} {r.text[:200]}", "retries": retries}
         data = r.json()
         papers = [_extract_paper(p) for p in (data.get("data", []) or [])]
         return {
@@ -126,15 +123,17 @@ async def search_papers(query: str, limit: int = 10, year: str = "",
             "results": papers,
             "total": data.get("total", len(papers)),
             "offset": data.get("offset", 0),
+            "retries": retries,
         }
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_paper_details(paper_id: str) -> dict:
+    retries = 0
     try:
         params = {"fields": FIELDS}
-        r = await _s2_get(f"{S2_PAPER}/{paper_id}", params)
+        r, retries = await _s2_get(f"{S2_PAPER}/{paper_id}", params)
         if r.status_code == 404:
             return {"success": False, "error": f"Paper not found: {paper_id}"}
         if r.status_code != 200:
@@ -142,13 +141,14 @@ async def get_paper_details(paper_id: str) -> dict:
         p = r.json()
         return {"success": True, "paper": _extract_paper(p)}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_papers_batch(paper_ids: list[str]) -> dict:
+    retries = 0
     try:
         params = {"fields": FIELDS}
-        r = await _s2_post(f"{S2_PAPER}/batch", {"ids": paper_ids[:500]}, params)
+        r, retries = await _s2_post(f"{S2_PAPER}/batch", {"ids": paper_ids[:500]}, params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 batch: {r.status_code} {r.text[:200]}"}
         papers = []
@@ -158,13 +158,14 @@ async def get_papers_batch(paper_ids: list[str]) -> dict:
             papers.append(_extract_paper(p))
         return {"success": True, "papers": papers}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_paper_citations(paper_id: str, limit: int = 20) -> dict:
+    retries = 0
     try:
         params = {"fields": FIELDS, "limit": min(limit, 100)}
-        r = await _s2_get(f"{S2_PAPER}/{paper_id}/citations", params)
+        r, retries = await _s2_get(f"{S2_PAPER}/{paper_id}/citations", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 citations: {r.status_code} {r.text[:200]}"}
         data = r.json()
@@ -174,13 +175,14 @@ async def get_paper_citations(paper_id: str, limit: int = 20) -> dict:
             cites.append(_extract_paper(p))
         return {"success": True, "citations": cites, "total": data.get("total", len(cites))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_paper_references(paper_id: str, limit: int = 20) -> dict:
+    retries = 0
     try:
         params = {"fields": FIELDS, "limit": min(limit, 100)}
-        r = await _s2_get(f"{S2_PAPER}/{paper_id}/references", params)
+        r, retries = await _s2_get(f"{S2_PAPER}/{paper_id}/references", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 references: {r.status_code} {r.text[:200]}"}
         data = r.json()
@@ -190,26 +192,28 @@ async def get_paper_references(paper_id: str, limit: int = 20) -> dict:
             refs.append(_extract_paper(p))
         return {"success": True, "references": refs, "total": data.get("total", len(refs))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_paper_recommendations(paper_id: str, limit: int = 10) -> dict:
+    retries = 0
     try:
         params: dict[str, Any] = {"fields": FIELDS, "limit": min(limit, 100)}
-        r = await _s2_post(S2_RECOMMENDATIONS, {"positivePaperIds": [paper_id]}, params=params, timeout=20)
+        r, retries = await _s2_post(S2_RECOMMENDATIONS, {"positivePaperIds": [paper_id]}, params=params, timeout=20)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 recommendations: {r.status_code} {r.text[:200]}"}
         data = r.json()
         papers = [_extract_paper(p) for p in (data.get("recommendedPapers", []) or [])[:limit]]
         return {"success": True, "recommendations": papers, "total": len(papers)}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def search_authors(query: str, limit: int = 10) -> dict:
+    retries = 0
     try:
         params: dict[str, Any] = {"query": query, "limit": min(limit, 100), "fields": _AUTHOR_FIELDS}
-        r = await _s2_get(f"{S2_AUTHOR}/search", params)
+        r, retries = await _s2_get(f"{S2_AUTHOR}/search", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 author search: {r.status_code} {r.text[:200]}"}
         data = r.json()
@@ -226,26 +230,28 @@ async def search_authors(query: str, limit: int = 10) -> dict:
             })
         return {"success": True, "results": authors, "total": data.get("total", len(authors))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def get_author_papers(author_id: str, limit: int = 10) -> dict:
+    retries = 0
     try:
         params: dict[str, Any] = {"fields": FIELDS, "limit": min(limit, 100)}
-        r = await _s2_get(f"{S2_AUTHOR}/{author_id}/papers", params)
+        r, retries = await _s2_get(f"{S2_AUTHOR}/{author_id}/papers", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 author papers: {r.status_code} {r.text[:200]}"}
         data = r.json()
         papers = [_extract_paper(p) for p in (data.get("data", []) or [])[:limit]]
         return {"success": True, "papers": papers, "total": data.get("total", len(papers))}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def autocomplete_papers(query: str) -> dict:
+    retries = 0
     try:
         params: dict[str, Any] = {"query": query}
-        r = await _s2_get(f"{S2_PAPER}/autocomplete", params)
+        r, retries = await _s2_get(f"{S2_PAPER}/autocomplete", params)
         if r.status_code != 200:
             return {"success": False, "error": f"S2 autocomplete: {r.status_code} {r.text[:200]}"}
         data = r.json()
@@ -260,27 +266,29 @@ async def autocomplete_papers(query: str) -> dict:
             })
         return {"success": True, "results": results}
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def s2_author_by_id(author_id: str, fields: str = "") -> dict:
+    retries = 0
     try:
         f = fields or _AUTHOR_FIELDS
-        r = await _s2_get(f"{S2_AUTHOR}/{author_id}", {"fields": f})
+        r, retries = await _s2_get(f"{S2_AUTHOR}/{author_id}", {"fields": f})
         if r.status_code != 200: return {"success": False, "error": api_error(f"S2 author {author_id}", r)}
         d = r.json()
         return {"success": True, "authorId": d.get("authorId",""), "name": d.get("name",""),
             "affiliations": d.get("affiliations",[]), "citationCount": d.get("citationCount",0),
             "hIndex": d.get("hIndex",0), "paperCount": d.get("paperCount",0)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
     if not ids: return {"success": False, "error": "no paper IDs"}
+    retries = 0
     try:
         f = fields or FIELDS
-        r = await _s2_post(f"{S2_PAPER}/batch", {"ids": ids[:500]}, params={"fields": f},
+        r, retries = await _s2_post(f"{S2_PAPER}/batch", {"ids": ids[:500]}, params={"fields": f},
                            extra_headers={"Content-Type": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("S2 batch", r)}
         data = r.json().get("data", [])
@@ -290,17 +298,18 @@ async def s2_bulk_search(ids: list[str], fields: str = "") -> dict:
             "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or []) if i is not None]
         return {"success": True, "results": results, "queried": len(ids), "returned": len(results)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
 
 
 async def s2_recommendations_with_negatives(positive_ids: list[str], negative_ids: list[str] | None = None,
                                             limit: int = 10, fields: str = "") -> dict:
     if not positive_ids: return {"success": False, "error": "no positive paper IDs"}
+    retries = 0
     try:
         f = fields or FIELDS
         body: dict[str, Any] = {"positivePaperIds": positive_ids[:100], "limit": min(limit, 100)}
         if negative_ids: body["negativePaperIds"] = negative_ids[:20]
-        r = await _s2_post(S2_RECOMMENDATIONS, body, params={"fields": f},
+        r, retries = await _s2_post(S2_RECOMMENDATIONS, body, params={"fields": f},
                            extra_headers={"Content-Type": "application/json"})
         if r.status_code != 200: return {"success": False, "error": api_error("S2 recs", r)}
         data = r.json().get("recommendedPapers", [])
@@ -310,4 +319,4 @@ async def s2_recommendations_with_negatives(positive_ids: list[str], negative_id
             "authors": [a.get("name","") for a in (i.get("authors") or [])]} for i in (data or []) if i is not None]
         return {"success": True, "results": results}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}

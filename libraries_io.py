@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_client, api_error
+from httpretry import retry_request
 
 
 async def search_libraries_io(name: str, platform: str = "") -> dict:
@@ -19,10 +20,12 @@ async def search_libraries_io(name: str, platform: str = "") -> dict:
     try:
         platforms = [platform] if platform else ["npm", "pypi", "cargo"]
         results = {}
-        c = get_http_client()
         for p in platforms:
-            r = await c.get(f"{LI_API}/{p}/{urllib.parse.quote(name)}", params={"api_key": li_key},
-                            headers={"User-Agent": "mcp-codesearch/1.0"})
+            r, retries = await retry_request(
+                "GET", f"{LI_API}/{p}/{urllib.parse.quote(name)}",
+                params={"api_key": li_key},
+                headers={"User-Agent": "mcp-codesearch/1.0"},
+            )
             if r.status_code == 200:
                 d = r.json()
                 results[p] = {
@@ -42,12 +45,12 @@ async def search_libraries_io(name: str, platform: str = "") -> dict:
                     "latest_release_date": d.get("latest_stable_release_published_at", ""),
                 }
         if not results:
-            return {"success": False, "error": f"'{name}' not found on Libraries.io"}
-        result: dict[str, Any] = {"success": True, "results": results}
+            return {"success": False, "error": f"'{name}' not found on Libraries.io", "retries": retries}
+        result: dict[str, Any] = {"success": True, "results": results, "retries": retries}
         await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def libraries_io_search(query: str, platform: str = "", sort: str = "",
@@ -72,10 +75,12 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
             params["licenses"] = licenses
         if keywords:
             params["keywords"] = keywords
-        c = get_http_client()
-        r = await c.get(f"{LI_API}/search", params=params, headers={"User-Agent": "mcp-codesearch/1.0"})
+        r, retries = await retry_request(
+            "GET", f"{LI_API}/search",
+            params=params, headers={"User-Agent": "mcp-codesearch/1.0"},
+        )
         if r.status_code != 200:
-            return {"success": False, "error": api_error("Libraries.io search", r)}
+            return {"success": False, "error": api_error("Libraries.io search", r), "retries": retries}
         data = r.json()
         results = []
         for item in (data if isinstance(data, list) else []):
@@ -91,10 +96,10 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
                 "forks": item.get("forks", 0),
                 "dependent_repos": item.get("dependent_repos_count", 0),
             })
-        await _set_cache(cache_key, {"success": True, "results": results, "total": len(results)})
-        return {"success": True, "results": results, "total": len(results)}
+        await _set_cache(cache_key, {"success": True, "results": results, "total": len(results), "retries": retries})
+        return {"success": True, "results": results, "total": len(results), "retries": retries}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def get_versions(platform: str, name: str) -> dict:
@@ -118,7 +123,7 @@ async def get_versions(platform: str, name: str) -> dict:
             })
         return {"success": True, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
@@ -147,7 +152,7 @@ async def get_dependencies(platform: str, name: str, version: str = "") -> dict:
             })
         return {"success": True, "results": deps, "total": len(deps)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def li_list_platforms(count: int = 50) -> dict:
@@ -159,7 +164,7 @@ async def li_list_platforms(count: int = 50) -> dict:
         platforms = [p.get("name", p) if isinstance(p, dict) else p for p in (r.json() or [])[:count]]
         return {"success": True, "platforms": platforms}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def li_list_licenses(count: int = 50) -> dict:
@@ -172,7 +177,7 @@ async def li_list_licenses(count: int = 50) -> dict:
         results = [{"name": l.get("name", l) if isinstance(l, dict) else l} for l in data[:count]]
         return {"success": True, "licenses": results}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def li_keyword_projects(keyword: str, count: int = 10) -> dict:
@@ -190,7 +195,7 @@ async def li_keyword_projects(keyword: str, count: int = 10) -> dict:
                     for d in data[:count]]
         return {"success": True, "results": results, "keyword": keyword}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def get_dependents(platform: str, name: str) -> dict:
@@ -215,7 +220,7 @@ async def get_dependents(platform: str, name: str) -> dict:
             })
         return {"success": True, "results": results, "total": len(results)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def get_github_repo(owner: str, repo: str) -> dict:
@@ -245,7 +250,7 @@ async def get_github_repo(owner: str, repo: str) -> dict:
             "source_rank": d.get("source_rank", 0),
         }}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def get_github_dependencies(owner: str, repo: str) -> dict:
@@ -271,4 +276,4 @@ async def get_github_dependencies(owner: str, repo: str) -> dict:
             })
         return {"success": True, "results": deps, "total": len(deps)}
     except (httpx.HTTPError, ValueError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}

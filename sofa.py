@@ -4,31 +4,34 @@ import asyncio
 import httpx
 
 from config import NV_EMBED_MODEL, SOFA_BASE, SOFA_KEY, _cached, _set_cache, get_http_client, api_error
+from httpretry import retry_request
 
 _session_id: str | None = None
 _session_lock = asyncio.Lock()
 
 
-async def _get_session() -> str | None:
+async def _get_session() -> tuple[str | None, int]:
     global _session_id
     if not SOFA_KEY:
-        return None
+        return None, 0
     if _session_id:
-        return _session_id
+        return _session_id, 0
     async with _session_lock:
         if _session_id:
-            return _session_id
-        c = get_http_client()
-        r = await c.post(f"{SOFA_BASE}/sessions", headers={
-            "Authorization": f"Bearer {SOFA_KEY}",
-            "X-Sofa-Client-Name": "mcp-codesearch",
-            "X-Sofa-Model-Name": NV_EMBED_MODEL,
-        })
+            return _session_id, 0
+        r, retries = await retry_request(
+            "POST", f"{SOFA_BASE}/sessions",
+            headers={
+                "Authorization": f"Bearer {SOFA_KEY}",
+                "X-Sofa-Client-Name": "mcp-codesearch",
+                "X-Sofa-Model-Name": NV_EMBED_MODEL,
+            },
+        )
         if r.status_code != 201:
             _session_id = None
-            return None
+            return None, retries
         _session_id = r.json()["session_id"]
-        return _session_id
+        return _session_id, retries
 
 
 async def search_sofa(query: str, count: int = 5, content_type: str = "question",
@@ -42,30 +45,36 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
         return cached
     try:
         if not SOFA_KEY:
-            return {"success": False, "error": "SOFA_KEY not configured"}
-        session_id = await _get_session()
+            return {"success": False, "error": "SOFA_KEY not configured", "retries": 0}
+        session_id, retries = await _get_session()
         if not session_id:
-            return {"success": False, "error": "SOFA: no session"}
+            return {"success": False, "error": "SOFA: no session", "retries": retries}
         params: dict[str, str | int] = {
             "search": query, "per_page": min(count, 10),
             "content_type": content_type, "page": page,
         }
         if steering:
             params["steering"] = steering
-        c = get_http_client()
-        r = await c.get(f"{SOFA_BASE}/posts",
-                        params=params,
-                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        r, r_retries = await retry_request(
+            "GET", f"{SOFA_BASE}/posts",
+            params=params,
+            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id},
+        )
+        retries += r_retries
         if r.status_code == 401:
             _session_id = None
-            session_id = await _get_session()
+            session_id, s_retries = await _get_session()
+            retries += s_retries
             if not session_id:
-                return {"success": False, "error": "SOFA: session expired"}
-            c = get_http_client()
-            r = await c.get(f"{SOFA_BASE}/posts", params=params,
-                            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+                return {"success": False, "error": "SOFA: session expired", "retries": retries}
+            r, r_retries = await retry_request(
+                "GET", f"{SOFA_BASE}/posts",
+                params=params,
+                headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id},
+            )
+            retries += r_retries
         if r.status_code != 200:
-            return {"success": False, "error": api_error("SOFA search:", r)}
+            return {"success": False, "error": api_error("SOFA search:", r), "retries": retries}
         data = r.json()
         items = data.get("items", [])
         results = []
@@ -86,29 +95,38 @@ async def search_sofa(query: str, count: int = 5, content_type: str = "question"
             "results": results,
             "steering": data.get("steering", ""),
             "total": data.get("total", len(results)),
+            "retries": retries,
         }
         await _set_cache(cache_key, result)
         return result
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": 0}
 
 
 async def _sofa_get_post(post_id: str) -> dict:
     session_id = None
+    retries = 0
     try:
-        c = get_http_client()
-        sess_r = await c.post(f"{SOFA_BASE}/sessions", headers={
-            "Authorization": f"Bearer {SOFA_KEY}",
-            "X-Sofa-Client-Name": "mcp-codesearch",
-        })
-        if sess_r.status_code != 201:
-            return {"success": False, "error": api_error("SOFA session:", sess_r)}
-        session_id = sess_r.json()["session_id"]
-        c = get_http_client()
-        r = await c.get(f"{SOFA_BASE}/posts/{post_id}",
-                        headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id})
+        if not SOFA_KEY:
+            return {"success": False, "error": "SOFA_KEY not configured", "retries": 0}
+        r, rr = await retry_request(
+            "POST", f"{SOFA_BASE}/sessions",
+            headers={
+                "Authorization": f"Bearer {SOFA_KEY}",
+                "X-Sofa-Client-Name": "mcp-codesearch",
+            },
+        )
+        retries += rr
+        if r.status_code != 201:
+            return {"success": False, "error": api_error("SOFA session:", r), "retries": retries}
+        session_id = r.json()["session_id"]
+        r, rr = await retry_request(
+            "GET", f"{SOFA_BASE}/posts/{post_id}",
+            headers={"Authorization": f"Bearer {SOFA_KEY}", "X-Sofa-Session": session_id},
+        )
+        retries += rr
         if r.status_code != 200:
-            return {"success": False, "error": api_error("SOFA post:", r)}
+            return {"success": False, "error": api_error("SOFA post:", r), "retries": retries}
         item = r.json()
         return {
             "success": True,
@@ -119,9 +137,10 @@ async def _sofa_get_post(post_id: str) -> dict:
             "score": item.get("score"),
             "content_type": item.get("content_type", ""),
             "url": item.get("public_url"),
+            "retries": retries,
         }
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "retries": retries}
     finally:
         if session_id:
             try:
