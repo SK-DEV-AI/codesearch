@@ -54,15 +54,15 @@ async def test_code_search_lane_status_and_truncated(monkeypatch):
         ]}
     async def sg(query, *a, **k):
         return {"success": True, "results": []}
-    async def pk(*a, **k):
-        return {"success": False, "error": "no token"}
     monkeypatch.setattr(server, "grep_mcp_search", gm)
     monkeypatch.setattr(server, "search_sourcegraph", sg)
-    monkeypatch.setattr(server, "pkgseer_search", pk)
     res = await server.handle_call_tool(None, _params("code_search", {"query": "q", "limit": 1}))
     data = json.loads(res.content[0].text)
     assert data["truncated"] is True
-    assert data["lane_status"]["pkgseer"].startswith("failed")
+    # PkgSeer needs a registry+name target, so the global path must report it
+    # as skipped, not as a failed lane (that was a phantom failure).
+    assert data["lane_status"]["pkgseer"].startswith("skipped")
+    assert data["lane_status"]["grep-mcp"].startswith("success")
     assert "lane_status" in data
 
 

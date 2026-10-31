@@ -648,6 +648,11 @@ def _availability_status(result) -> str:
         if _count == 0:
             return "success (0 results)"
         return "success"
+    if isinstance(result, dict) and result.get("skipped"):
+        # Not applicable to this request (e.g. PkgSeer without a target).
+        # Reporting that as "failed" sends callers chasing a phantom bug.
+        _why = (result.get("summary") or "skipped").strip()
+        return _why if _why.startswith("skipped") else f"skipped: {_why}"
     if isinstance(result, dict):
         # Propagate the real reason (and any status/code the lane gives).
         _err = (result.get("error") or result.get("message")
@@ -1609,18 +1614,20 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                                          source=source, lang=lang, limit=limit)
                 return _res(r, r.get("success", False))
             # No target: global public-repo search. grep.app MCP is primary
-            # (keyless, <1s, bypasses the REST bot-wall); Sourcegraph second;
-            # PkgSeer unscoped when its token is configured.
+            # (keyless, <1s, bypasses the REST bot-wall); Sourcegraph second.
+            # PkgSeer is NOT called here: its GraphQL search requires a
+            # registry+name target, so an unscoped call always errors out and
+            # used to surface as a phantom "failed" lane. Reported as skipped
+            # instead, so a caller sees exactly which lanes actually ran.
             gm_task = grep_mcp_search(query, language=[lang] if lang else None,
                                       timeout=30)
             sg_task = search_sourcegraph(query, lang=lang, count=limit)
-            pk_task = pkgseer_search(query=query, source=source,
-                                     lang=lang, limit=limit)
-            gm, sg, pk = await asyncio.gather(gm_task, sg_task, pk_task,
-                                              return_exceptions=True)
+            gm, sg = await asyncio.gather(gm_task, sg_task,
+                                          return_exceptions=True)
             gm = {} if isinstance(gm, BaseException) else gm
             sg = {} if isinstance(sg, BaseException) else sg
-            pk = {} if isinstance(pk, BaseException) else pk
+            pk = {"success": False, "skipped": True,
+                  "summary": "skipped: PkgSeer needs target=<registry>:<name>"}
             gm_results = [{"source": "grep-mcp", "repo": h.get("repo", ""),
                            "file": h.get("file", ""), "url": h.get("url", ""),
                            "title": f"{h.get('repo', '')}: {h.get('file', '')}",
