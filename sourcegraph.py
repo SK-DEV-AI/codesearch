@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from codequery import relax_queries
 from config import get_http_client
 
 _SG_GQL = "https://sourcegraph.com/.api/graphql"
@@ -106,11 +107,34 @@ def _extract(data: dict) -> list[dict]:
 
 
 async def search_sourcegraph(query: str, repo: str = "", lang: str = "",
-                             count: int = 10) -> dict[str, Any]:
-    """Global code search over public repos. Keyless. Returns file matches."""
+                             count: int = 10,
+                             relax: bool = True) -> dict[str, Any]:
+    """Global code search over public repos. Keyless. Returns file matches.
+
+    `context:global` ANDs every term, so a natural-language query returns zero
+    even when all its words are common (measured 2026-10-31: "httpx vs aiohttp
+    benchmark" 0, "httpx aiohttp" 5). On an empty but successful result the
+    lane retries the shortened variants from `codequery.relax_queries` and
+    keeps `query_relaxed` / `query_requested` on the payload; an upstream
+    error stops the ladder instead of hammering a failing endpoint.
+    """
     if not query.strip():
         return {"success": False, "error": "query required"}
-    q = _build_query(query, repo, lang, count)
+    r = await _sg_attempt(_build_query(query, repo, lang, count))
+    if relax and r.get("success") and not r.get("results"):
+        for cand in relax_queries(query):
+            r2 = await _sg_attempt(_build_query(cand, repo, lang, count))
+            if not r2.get("success"):
+                break
+            if r2.get("results"):
+                r2["query_relaxed"] = True
+                r2["query_requested"] = query.strip()
+                return r2
+    return r
+
+
+async def _sg_attempt(q: str) -> dict[str, Any]:
+    """One query string, with the existing single transient-error retry."""
     last_err = "Sourcegraph request failed"
     for attempt in range(2):
         if attempt:

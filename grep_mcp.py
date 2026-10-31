@@ -28,6 +28,8 @@ import logging
 import re
 from typing import Any
 
+from codequery import relax_queries
+
 logger = logging.getLogger("grep_mcp")
 
 _MCP_URL = "https://mcp.grep.app"
@@ -82,13 +84,38 @@ def _parse_hits(text: str) -> list[dict]:
 async def grep_mcp_search(query: str, *, language: list[str] | None = None,
                           repo: str = "", path: str = "",
                           use_regexp: bool = False,
-                          timeout: float = _TIMEOUT_S) -> dict[str, Any]:
+                          timeout: float = _TIMEOUT_S,
+                          relax: bool = True) -> dict[str, Any]:
     """Call searchGitHub on mcp.grep.app. Returns {success, hits|error}.
 
     Never raises — every failure is a dict (lane-safe for asyncio.gather).
+
+    The index ANDs terms, so a long natural-language query matches nothing even
+    when every term is common. On an empty result (never on an error — that is
+    a different failure) the lane retries with the shortened variants from
+    `codequery.relax_queries` and reports `query_relaxed` / `query_requested`
+    so the caller can see which query actually ran.
     """
     if not (query or "").strip():
         return {"success": False, "error": "query required"}
+    variants = [query.strip()] + (relax_queries(query) if relax else [])
+    last: dict[str, Any] = {"success": True, "hits": []}
+    for i, qv in enumerate(variants):
+        r = await _grep_mcp_call(qv, language=language, repo=repo, path=path,
+                                 use_regexp=use_regexp, timeout=timeout)
+        if not r.get("success") or r.get("hits"):
+            if i and r.get("success"):
+                r = dict(r, query_relaxed=True, query_requested=query.strip(),
+                         query=qv)
+            return r
+        last = r
+    return last
+
+
+async def _grep_mcp_call(query: str, *, language: list[str] | None,
+                         repo: str, path: str, use_regexp: bool,
+                         timeout: float) -> dict[str, Any]:
+    """One MCP round trip. Never raises."""
     try:
         from mcp.client.streamable_http import streamable_http_client
         from mcp.client.session import ClientSession

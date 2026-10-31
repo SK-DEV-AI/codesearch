@@ -1657,15 +1657,25 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                                              "sourcegraph": _availability_status(sg),
                                              "pkgseer": _availability_status(pk)},
                              "truncated": False}, False)
-            return _res({"success": True, "results": combined[:limit],
-                         "total": len(combined),
-                         "truncated": len(combined) > limit,
-                         "lanes": {"grep-mcp": len(gm_results),
-                                   "sourcegraph": len(sg_results),
-                                   "pkgseer": len(pk_results)},
-                         "lane_status": {"grep-mcp": _availability_status(gm),
-                                         "sourcegraph": _availability_status(sg),
-                                         "pkgseer": _availability_status(pk)}}, True)
+            out = {"success": True, "results": combined[:limit],
+                   "total": len(combined),
+                   "truncated": len(combined) > limit,
+                   "lanes": {"grep-mcp": len(gm_results),
+                             "sourcegraph": len(sg_results),
+                             "pkgseer": len(pk_results)},
+                   "lane_status": {"grep-mcp": _availability_status(gm),
+                                   "sourcegraph": _availability_status(sg),
+                                   "pkgseer": _availability_status(pk)}}
+            # Both global lanes narrow a long query until something matches.
+            # Say so, so a caller does not mistake loose hits for exact ones.
+            if gm.get("query_relaxed") or sg.get("query_relaxed"):
+                out["query_relaxed"] = True
+                out["query_requested"] = query
+                out["queries_used"] = {k: v.get("query", "")
+                                       for k, v in (("grep-mcp", gm),
+                                                    ("sourcegraph", sg))
+                                       if v.get("query_relaxed")}
+            return _res(out, True)
 
         elif name == "code_files":
             spec = str(arguments.get("spec", ""))

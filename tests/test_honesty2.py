@@ -119,3 +119,81 @@ async def test_vulns_dedupe_description(monkeypatch):
     assert data["vulnerability"]["description"] == "same text"
     assert "description" not in (data.get("nvd") or {})
     assert (data.get("nvd") or {}).get("description_sources") == ["vulnerability", "nvd"] or data.get("description_sources") == ["vulnerability", "nvd"]
+
+
+# ---------- CS8: long natural-language queries relax instead of returning 0 ----------
+
+import codequery
+import grep_mcp
+import sourcegraph
+
+
+def test_relax_queries_shape():
+    assert codequery.relax_queries("httpx aiohttp") == []          # already short
+    v = codequery.relax_queries("httpx vs aiohttp benchmark")
+    assert v == ["httpx aiohttp benchmark", "httpx aiohttp"]      # stopword dropped, then 2 terms
+    # No stopwords: still narrows to 3 then 2 terms.
+    assert codequery.relax_queries("sqlite fts5 bm25 ranking") == [
+        "sqlite fts5 bm25", "sqlite fts5"]
+    # Nothing to relax when every token is filler-free and short.
+    assert codequery.relax_queries("") == []
+
+
+@pytest.mark.asyncio
+async def test_grep_mcp_relaxes_on_empty(monkeypatch):
+    seen = []
+
+    async def fake(query, **k):
+        seen.append(query)
+        hits = [] if len(query.split()) > 2 else [{"repo": "r", "file": "f", "matches": []}]
+        return {"success": True, "hits": hits}
+
+    monkeypatch.setattr(grep_mcp, "_grep_mcp_call", fake)
+    r = await grep_mcp.grep_mcp_search("sqlite fts5 bm25 ranking")
+    assert r["hits"] and r["query_relaxed"] is True
+    assert r["query_requested"] == "sqlite fts5 bm25 ranking"
+    assert seen == ["sqlite fts5 bm25 ranking", "sqlite fts5 bm25", "sqlite fts5"]
+
+
+@pytest.mark.asyncio
+async def test_grep_mcp_does_not_relax_after_error(monkeypatch):
+    calls = []
+
+    async def fake(query, **k):
+        calls.append(query)
+        return {"success": False, "error": "grep MCP timeout"}
+
+    monkeypatch.setattr(grep_mcp, "_grep_mcp_call", fake)
+    r = await grep_mcp.grep_mcp_search("sqlite fts5 bm25 ranking")
+    assert r["success"] is False and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sourcegraph_relaxes_on_empty(monkeypatch):
+    async def fake(q):
+        # The built query carries `context:global` + count; the terms are last.
+        if "ranking" in q:
+            return {"success": True, "results": [], "total": 0, "query": q}
+        return {"success": True, "results": [{"source": "sourcegraph"}],
+                "total": 1, "query": q}
+
+    monkeypatch.setattr(sourcegraph, "_sg_attempt", fake)
+    r = await sourcegraph.search_sourcegraph("sqlite fts5 bm25 ranking")
+    assert r["results"] and r["query_relaxed"] is True
+    assert r["query_requested"] == "sqlite fts5 bm25 ranking"
+
+
+@pytest.mark.asyncio
+async def test_code_search_reports_relaxed_query(monkeypatch):
+    async def gm(query, *a, **k):
+        return {"success": True, "hits": [{"repo": "r", "file": "f", "matches": []}],
+                "query_relaxed": True, "query_requested": "a b c d", "query": "a b"}
+    async def sg(query, *a, **k):
+        return {"success": True, "results": []}
+    monkeypatch.setattr(server, "grep_mcp_search", gm)
+    monkeypatch.setattr(server, "search_sourcegraph", sg)
+    res = await server.handle_call_tool(None, _params("code_search", {"query": "a b c d"}))
+    data = json.loads(res.content[0].text)
+    assert data["query_relaxed"] is True
+    assert data["query_requested"] == "a b c d"
+    assert data["queries_used"] == {"grep-mcp": "a b"}
