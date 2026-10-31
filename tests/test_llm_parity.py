@@ -19,6 +19,7 @@ def _ep(provider="local"):
 
 def test_endpoints_local_first_by_default(monkeypatch):
     monkeypatch.setattr(llm, "local_endpoint", lambda: _ep("local"))
+    monkeypatch.setattr(llm, "proxy_endpoint", lambda: {})
     monkeypatch.setenv("GROQ_API_KEYS", "g1,g2")
     monkeypatch.delenv("CODESEARCH_SYNTH_PROVIDER", raising=False)
     monkeypatch.delenv("CODESEARCH_MODEL_FALLBACK", raising=False)
@@ -26,10 +27,41 @@ def test_endpoints_local_first_by_default(monkeypatch):
     assert [e["provider"] for e in eps] == ["local", "groq"]
 
 
+def test_proxy_is_a_second_in_tool_gateway(monkeypatch):
+    """Both gateways serve the same model, so both are the in-tool lane."""
+    monkeypatch.setattr(llm, "local_endpoint", lambda: _ep("local"))
+    monkeypatch.setattr(llm, "proxy_endpoint", lambda: _ep("proxy"))
+    monkeypatch.setenv("GROQ_API_KEYS", "g1")
+    monkeypatch.delenv("CODESEARCH_SYNTH_PROVIDER", raising=False)
+    monkeypatch.delenv("CODESEARCH_MODEL_FALLBACK", raising=False)
+    monkeypatch.delenv("DISTILL_ORDER", raising=False)
+    assert [e["provider"] for e in llm.endpoints()] == ["local", "proxy", "groq"]
+    # Strict mode forbids spending a keyed cloud lane, not the proxy.
+    monkeypatch.setenv("CODESEARCH_MODEL_FALLBACK", "off")
+    assert [e["provider"] for e in llm.endpoints()] == ["local", "proxy"]
+
+
+def test_a_429d_gateway_is_retired(monkeypatch):
+    # Distinct base_urls: identity is gateway+model, not the label.
+    monkeypatch.setattr(llm, "local_endpoint",
+                        lambda: {**_ep("local"), "base_url": "http://gateway-a"})
+    monkeypatch.setattr(llm, "proxy_endpoint",
+                        lambda: {**_ep("proxy"), "base_url": "http://gateway-b"})
+    monkeypatch.delenv("GROQ_API_KEYS", raising=False)
+    monkeypatch.delenv("DISTILL_ORDER", raising=False)
+    monkeypatch.delenv("DISTILL_RATE_LIMIT_COOLDOWN", raising=False)
+    monkeypatch.setattr(llm, "_COOLDOWN", {})
+    llm.mark_rate_limited({**_ep("local"), "base_url": "http://gateway-a"})
+    assert [e["provider"] for e in llm.endpoints()] == ["proxy", "local"]
+    llm.reset_cooldowns()
+    assert [e["provider"] for e in llm.endpoints()] == ["local", "proxy"]
+
+
 # ---------- 2. strict mode drops fallback ----------
 
 def test_endpoints_strict_mode_drops_fallback(monkeypatch):
     monkeypatch.setattr(llm, "local_endpoint", lambda: _ep("local"))
+    monkeypatch.setattr(llm, "proxy_endpoint", lambda: {})
     monkeypatch.setenv("GROQ_API_KEYS", "g1")
     monkeypatch.setenv("CODESEARCH_MODEL_FALLBACK", "off")
     monkeypatch.delenv("CODESEARCH_SYNTH_PROVIDER", raising=False)
@@ -43,6 +75,7 @@ def test_endpoints_strict_mode_drops_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_no_endpoint_returns_error(monkeypatch):
     monkeypatch.setattr(llm, "local_endpoint", lambda: {})
+    monkeypatch.setattr(llm, "proxy_endpoint", lambda: {})
     monkeypatch.delenv("GROQ_API_KEYS", raising=False)
     llm.begin()
     text, finish, err, att = await llm.chat([{"role": "user", "content": "x"}])

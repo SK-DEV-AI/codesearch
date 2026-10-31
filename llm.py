@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Any
 
 import httpx
@@ -43,6 +44,20 @@ _LAST: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 _JCODE_CONFIG = os.path.expanduser("~/.jcode/config.toml")
 _DEFAULT_BASE_URL = "http://127.0.0.1:11435/v1"
 _DEFAULT_MODEL = "reflection/beam:free"
+
+# The same Beam model is served by the local opencode proxy as well. When the
+# cmdcode2api gateway's daily quota is spent it answers 429 for the rest of the
+# day, so the proxy is the endpoint that keeps summarisation working. Both are
+# the in-tool model; only the gateway differs.
+_PROXY_BASE_URL = "http://127.0.0.1:8787/v1"
+_PROXY_MODEL = "beam-free"
+_PROXY_DEFAULT_KEY = "local-dev-key"  # the local proxy's dev key
+
+# A 429 that says the QUOTA is spent will not clear on the next attempt, so an
+# endpoint that rate-limits us is retired for a while instead of being retried
+# on every single call.
+_COOLDOWN: dict[str, float] = {}
+_COOLDOWN_DEFAULT = 600.0
 
 
 def begin() -> None:
@@ -105,12 +120,70 @@ def local_endpoint() -> dict:
             "model": model, "api_key": key, "rotate": False}
 
 
+def proxy_endpoint() -> dict:
+    """The same Beam model behind the local opencode proxy, or {} when off.
+
+    DISTILL_PROXY=off disables it; DISTILL_PROXY_BASE_URL / _MODEL / _API_KEY
+    override the defaults.
+    """
+    if (os.environ.get("DISTILL_PROXY") or "on").strip().lower() in (
+            "off", "none", "0", "false", "no"):
+        return {}
+    base_url = (os.environ.get("DISTILL_PROXY_BASE_URL")
+                or _PROXY_BASE_URL).rstrip("/")
+    model = os.environ.get("DISTILL_PROXY_MODEL") or _PROXY_MODEL
+    key = ((os.environ.get("DISTILL_PROXY_API_KEY") or "").strip()
+           or _PROXY_DEFAULT_KEY)
+    return {"provider": "proxy", "base_url": base_url, "model": model,
+            "api_key": key, "rotate": False}
+
+
+def _ep_id(ep: dict) -> str:
+    return f"{ep.get('base_url', '')}|{ep.get('model', '')}"
+
+
+def _cooldown_secs() -> float:
+    raw = os.environ.get("DISTILL_RATE_LIMIT_COOLDOWN", "")
+    try:
+        return max(0.0, float(raw)) if str(raw).strip() else _COOLDOWN_DEFAULT
+    except (TypeError, ValueError):
+        return _COOLDOWN_DEFAULT
+
+
+def mark_rate_limited(ep: dict) -> None:
+    """Retire an endpoint for a while after it answers 429."""
+    secs = _cooldown_secs()
+    if secs > 0:
+        _COOLDOWN[_ep_id(ep)] = time.monotonic() + secs
+
+
+def cooled_down(ep: dict) -> bool:
+    until = _COOLDOWN.get(_ep_id(ep), 0.0)
+    if until and time.monotonic() < until:
+        return True
+    if until:
+        _COOLDOWN.pop(_ep_id(ep), None)
+    return False
+
+
+def reset_cooldowns() -> None:
+    """Forget every cooldown (tests, and an explicit re-probe)."""
+    _COOLDOWN.clear()
+
+
 def endpoints() -> list[dict]:
     """Candidate endpoints, best first.
 
     CODESEARCH_SYNTH_PROVIDER: local (default) | groq | auto
     CODESEARCH_MODEL_FALLBACK: on (default) | off
       off - only the preferred endpoint is tried.
+    DISTILL_ORDER: comma-separated preference, e.g. "proxy,local,groq".
+    DISTILL_PROXY: on (default) | off - serve Beam from the local proxy too.
+
+    Endpoints that recently answered 429 are moved to the back, and dropped
+    entirely when at least one endpoint is still fresh: a spent daily quota is
+    not worth a round trip on every call. If everything is cooling down the
+    full list is returned, so a mis-set cooldown cannot silence the model.
     """
     prefer = (os.environ.get("CODESEARCH_SYNTH_PROVIDER") or "local").strip().lower()
     keys = groq_keys()
@@ -119,11 +192,28 @@ def endpoints() -> list[dict]:
              "api_key": "", "rotate": True}
             if keys else None)
     local = local_endpoint() or None
-    order = [groq, local] if prefer == "groq" else [local, groq]
-    eps = [e for e in order if e]
+    proxy = proxy_endpoint() or None
+    chain = {"local": local, "proxy": proxy, "groq": groq}
+    default_order = ["local", "proxy", "groq"]
+    if prefer == "groq":
+        default_order = ["groq", "local", "proxy"]
+    elif prefer == "proxy":
+        default_order = ["proxy", "local", "groq"]
+    wanted = [n.strip().lower() for n in
+              (os.environ.get("DISTILL_ORDER") or "").split(",") if n.strip()]
+    order = list(wanted or default_order)
+    # A preference reorders the chain, it does not truncate it: anything not
+    # named keeps its usual place at the end.
+    order += [n for n in ("local", "proxy", "groq") if n not in order]
+    eps = [chain[n] for n in order if chain.get(n)]
+    fresh = [e for e in eps if not cooled_down(e)]
+    if fresh:
+        eps = fresh + [e for e in eps if cooled_down(e)]
     strict = (os.environ.get("CODESEARCH_MODEL_FALLBACK") or "on").strip().lower()
     if strict in ("off", "none", "0", "false", "no"):
-        return eps[:1]
+        if prefer == "groq":
+            return eps[:1]
+        return [e for e in eps if e.get("provider") != "groq"]
     return eps
 
 
@@ -164,6 +254,9 @@ async def chat(messages: list[dict], *, max_tokens: int = 1200,
             return text, finish, "", total
         last = err
         logger.warning("llm: %s call failed on %s: %s", kind, ep.get("provider"), err)
+        if "HTTP 429" in err:
+            # Retire it so the next call does not pay this round trip again.
+            mark_rate_limited(ep)
     return "", "", last, total
 
 
@@ -205,6 +298,10 @@ async def _one(ep: dict, messages: list[dict], *, max_tokens: int,
         if resp.status_code != 200:
             last = f"HTTP {resp.status_code}: {resp.text[:200]}"
             if resp.status_code in (429, 500, 502, 503, 504):
+                # A 429 is usually a spent quota rather than a hiccup: one
+                # retry here, then chat() moves on to the next endpoint.
+                if resp.status_code == 429 and attempt >= 2:
+                    break
                 continue
             return "", "", last, attempt
         try:
@@ -239,9 +336,14 @@ def _selfcheck() -> None:
 
     saved = {k: os.environ.get(k) for k in
              ("CODESEARCH_SYNTH_PROVIDER", "GROQ_API_KEYS", "DISTILL_API_KEY",
-              "CODESEARCH_MODEL_FALLBACK")}
+              "CODESEARCH_MODEL_FALLBACK", "DISTILL_PROXY", "DISTILL_ORDER",
+              "DISTILL_RATE_LIMIT_COOLDOWN")}
     orig_local = globals()["local_endpoint"]
+    orig_proxy = globals()["proxy_endpoint"]
+    reset_cooldowns()
     try:
+        # Keep the proxy out of the way until its own checks below.
+        globals()["proxy_endpoint"] = lambda: {}
         globals()["local_endpoint"] = lambda: {"provider": "local", "base_url": "x",
                                                "model": "m", "api_key": "k",
                                                "rotate": False}
@@ -270,6 +372,35 @@ def _selfcheck() -> None:
         check("fallback returns when re-enabled",
               len(endpoints()) == 2)
         os.environ.pop("CODESEARCH_MODEL_FALLBACK", None)
+
+        # The proxy is a second gateway for the SAME model, not a different
+        # model: it exists so a spent quota on one gateway cannot stop
+        # summarisation.
+        globals()["proxy_endpoint"] = orig_proxy
+        os.environ.pop("DISTILL_PROXY", None)
+        os.environ.pop("DISTILL_ORDER", None)
+        os.environ.pop("CODESEARCH_SYNTH_PROVIDER", None)
+        check("proxy sits behind local by default",
+              [e["provider"] for e in endpoints()] == ["local", "proxy", "groq"])
+        os.environ["DISTILL_ORDER"] = "proxy,local"
+        check("DISTILL_ORDER overrides preference",
+              [e["provider"] for e in endpoints()] == ["proxy", "local", "groq"])
+        os.environ["DISTILL_PROXY"] = "off"
+        check("DISTILL_PROXY=off removes it",
+              "proxy" not in [e["provider"] for e in endpoints()])
+        os.environ.pop("DISTILL_PROXY", None)
+        os.environ.pop("DISTILL_ORDER", None)
+        proxy_ep = [e for e in endpoints() if e["provider"] == "proxy"][0]
+        mark_rate_limited(proxy_ep)
+        check("a 429'd endpoint moves to the back",
+              [e["provider"] for e in endpoints()] == ["local", "groq", "proxy"])
+        os.environ["DISTILL_RATE_LIMIT_COOLDOWN"] = "0"
+        reset_cooldowns()
+        mark_rate_limited(proxy_ep)
+        check("a zero cooldown retires nothing", _COOLDOWN == {})
+        os.environ.pop("DISTILL_RATE_LIMIT_COOLDOWN", None)
+        reset_cooldowns()
+        globals()["proxy_endpoint"] = lambda: {}
 
         os.environ.pop("GROQ_API_KEYS", None)
         globals()["local_endpoint"] = lambda: {}
@@ -395,6 +526,8 @@ def _selfcheck() -> None:
         check("successful chat bumps its kind", c3 == {"synthesis": 1})
     finally:
         globals()["local_endpoint"] = orig_local
+        globals()["proxy_endpoint"] = orig_proxy
+        reset_cooldowns()
         globals().pop("endpoints", None)
         for k, v in saved.items():
             if v is None:
