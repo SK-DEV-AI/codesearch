@@ -9,6 +9,28 @@ from config import LI_API, LI_KEY, _cached, _set_cache, _next_li_key, get_http_c
 from httpretry import retry_request
 
 
+def _license_name(raw: Any) -> str:
+    """Keep the licence NAME, never the licence body.
+
+    Libraries.io returns the whole licence text for some packages (a live
+    `search_libraries` hit carried 1.5 KB of "Redistribution and use in source
+    and binary forms..." per result, twice over). The name is what a caller
+    can use; the body is noise. When the body has to go, the field says so
+    rather than going blank, so "unknown" and "dropped" stay distinguishable.
+    """
+    if not isinstance(raw, str):
+        return ""
+    text = raw.strip()
+    if not text:
+        return ""
+    if len(text) <= 80 and "\n" not in text:
+        return text
+    first = text.splitlines()[0].strip()
+    if 0 < len(first) <= 40 and not first.endswith((".", ":")):
+        return f"{first} (license text omitted)"
+    return "license text omitted (unnamed)"
+
+
 async def search_libraries_io(name: str, platform: str = "") -> dict:
     if not LI_KEY:
         return {"success": False, "error": "LI_KEY not configured"}
@@ -31,7 +53,7 @@ async def search_libraries_io(name: str, platform: str = "") -> dict:
                 results[p] = {
                     "name": d.get("name", name),
                     "version": d.get("latest_stable_release", d.get("latest_release_number", "")),
-                    "license": d.get("licenses", ""),
+                    "license": _license_name(d.get("licenses", "")),
                     "stars": d.get("stars", 0),
                     "forks": d.get("forks", 0),
                     "dependent_repos": d.get("dependent_repos_count", 0),
@@ -91,7 +113,7 @@ async def libraries_io_search(query: str, platform: str = "", sort: str = "",
                 "stars": item.get("stars", 0),
                 "language": item.get("language", ""),
                 "latest_version": item.get("latest_release_number", ""),
-                "license": item.get("licenses", ""),
+                "license": _license_name(item.get("licenses", "")),
                 "url": item.get("homepage", ""),
                 "forks": item.get("forks", 0),
                 "dependent_repos": item.get("dependent_repos_count", 0),
@@ -242,7 +264,7 @@ async def get_github_repo(owner: str, repo: str) -> dict:
             "stars": d.get("stars", 0),
             "forks": d.get("forks", 0),
             "language": d.get("language", ""),
-            "license": d.get("license", ""),
+            "license": _license_name(d.get("license", "")),
             "homepage": d.get("homepage", ""),
             "repository": d.get("repository_url", ""),
             "open_issues": d.get("open_issues", 0),
