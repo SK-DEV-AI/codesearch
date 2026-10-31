@@ -395,12 +395,30 @@ async def attach_nvd(result: dict, vuln_id: str = "") -> dict:
                              "error": enrich.get("error", "NVD enrichment failed")}
             return result
         data = enrich.get("cve") or {}
+        base_desc = ""
+        vuln = result.get("vulnerability")
+        if isinstance(vuln, dict):
+            base_desc = vuln.get("description") or ""
         section = {"success": True, "cve_id": cid}
         section.update(data)
         if enrich.get("cached"):
             section["cached"] = True
         result["nvd"] = section
-        _fill_gaps(result.get("vulnerability") or {}, data)
+        _fill_gaps(vuln if isinstance(vuln, dict) else {}, data)
+        # Dedupe the advisory description across sources: keep one copy plus
+        # source tags instead of shipping the same text twice.
+        final_desc = ""
+        if isinstance(vuln, dict):
+            final_desc = vuln.get("description") or ""
+        nvd_desc = section.get("description") or ""
+        if nvd_desc and final_desc and nvd_desc == final_desc:
+            section.pop("description", None)
+            sources = []
+            if base_desc:
+                sources.append("vulnerability")
+            sources.append("nvd")
+            section["description_sources"] = sources
+            result["description_sources"] = sources
         return result
     except Exception:
         logger.debug("NVD attach failed for %r: %s", vuln_id, exc_info=True)

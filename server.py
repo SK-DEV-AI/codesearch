@@ -633,6 +633,20 @@ def _availability_status(result) -> str:
         return (f"error: {type(result).__name__}: {_msg}" if _msg
                 else f"error: {type(result).__name__} (no message)")
     if isinstance(result, dict) and result.get("success"):
+        # A lane that answered successfully but contributed nothing is not
+        # productive — surface that instead of a bare "success".
+        _count = None
+        for _key in ("total", "total_raw", "total_chars", "count",
+                     "results", "items", "papers", "hits", "matches"):
+            if _key in result:
+                _v = result.get(_key)
+                if isinstance(_v, list):
+                    _count = len(_v)
+                elif isinstance(_v, (int, float)):
+                    _count = int(_v)
+                break
+        if _count == 0:
+            return "success (0 results)"
         return "success"
     if isinstance(result, dict):
         # Propagate the real reason (and any status/code the lane gives).
@@ -805,9 +819,16 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                     r = {"success": False, "error": "DeepWiki timeout"}
                 else:
                     if r.get("success"):
+                        r = dict(r)
+                        r["answered_by"] = "deepwiki"
+                        r["fallback"] = False
                         return _res(r)
                 r2 = await codewiki_ask_repo(fallback_owner, fallback_repo_name, question)
-                return _res(r2, r2.get("success", False))
+                if isinstance(r2, dict):
+                    r2 = dict(r2)
+                    r2["answered_by"] = "codewiki"
+                    r2["fallback"] = True
+                return _res(r2, r2.get("success", False) if isinstance(r2, dict) else False)
             elif action == "architecture":
                 r = await deepwiki_fetch(
                     owner=str(arguments.get("owner", "")),
@@ -894,14 +915,15 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             else:  # info
                 pkg_info = await resolve_package(registry, pkg_name)
                 r = pkg_info
+                enrichment_errors: list[str] = []
                 if pkg_info.get("success"):
                     try:
                         lib_info = await search_libraries_io(
                             name=pkg_name, platform=pkg_info["registry"])
                         if lib_info.get("success"):
                             r["libraries_io"] = lib_info
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        enrichment_errors.append(f"libraries_io: {type(e).__name__}: {e}")
                     try:
                         # M5: pass the resolved version — version-less PURLs always
                         # return empty from Sonatype Guide, so the count was 0.
@@ -925,8 +947,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                             exploited = [v.get("id", "") for v in vulns_list if v.get("exploited")]
                             if exploited:
                                 r["exploited"] = exploited
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        enrichment_errors.append(f"vulnerabilities: {type(e).__name__}: {e}")
                     try:
                         # GHSA severity enrichment for the package ecosystem.
                         eco_map = {"npm": "npm", "pypi": "pip", "crates": "rust"}
@@ -939,8 +961,8 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                                      "severity": a.get("severity", ""),
                                      "summary": (a.get("summary", "") or "")[:200]}
                                     for a in g["advisories"][:5]]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        enrichment_errors.append(f"ghsa: {type(e).__name__}: {e}")
                     try:
                         # OpenSSF Scorecard health when the package maps to GitHub.
                         owner = pkg_info.get("repo_owner", "")
@@ -956,8 +978,10 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                                         {"name": c.get("name", ""), "score": c.get("score", 0)}
                                         for c in card.get("checks", [])][:10],
                                 }
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        enrichment_errors.append(f"scorecard: {type(e).__name__}: {e}")
+                if enrichment_errors:
+                    r["enrichment_errors"] = enrichment_errors
             return _res(r, r.get("success", False))
 
         elif name == "so_search":
@@ -1621,12 +1645,20 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
                              "error": gm.get("error", "") or sg.get("error", "") or pk.get("error", "") or "all code lanes failed",
                              "lanes": {"grep-mcp": gm.get("error", "ok") if not gm.get("success") else "ok",
                                          "sourcegraph": sg.get("error", "ok") if not sg.get("success") else "ok",
-                                         "pkgseer": pk.get("error", "ok") if not pk.get("success") else "ok"}}, False)
+                                         "pkgseer": pk.get("error", "ok") if not pk.get("success") else "ok"},
+                             "lane_status": {"grep-mcp": _availability_status(gm),
+                                             "sourcegraph": _availability_status(sg),
+                                             "pkgseer": _availability_status(pk)},
+                             "truncated": False}, False)
             return _res({"success": True, "results": combined[:limit],
                          "total": len(combined),
+                         "truncated": len(combined) > limit,
                          "lanes": {"grep-mcp": len(gm_results),
                                    "sourcegraph": len(sg_results),
-                                   "pkgseer": len(pk_results)}}, True)
+                                   "pkgseer": len(pk_results)},
+                         "lane_status": {"grep-mcp": _availability_status(gm),
+                                         "sourcegraph": _availability_status(sg),
+                                         "pkgseer": _availability_status(pk)}}, True)
 
         elif name == "code_files":
             spec = str(arguments.get("spec", ""))
@@ -1648,12 +1680,42 @@ async def handle_call_tool(ctx, params) -> CallToolResult:
             if spec.startswith("npm:") or ":" not in spec:
                 jr = await jsdelivr_read_file(spec, path)
                 if jr.get("success"):
-                    return _res(jr)
+                    out = dict(jr)
+                    out.setdefault("truncated", False)
+                    if "total_chars" in out and "original_length" not in out:
+                        out["original_length"] = out.get("total_chars")
+                    return _res(out)
             r = await pkgseer_code_read(
                 spec=spec,
                 path=path,
             )
-            return _res(r, r.get("success", False))
+            if isinstance(r, dict) and r.get("success"):
+                out = dict(r)
+                # Surface truncation when the reader returned a partial slice.
+                total_lines = out.get("totalLines", out.get("total_lines"))
+                end_line = out.get("endLine", out.get("end_line"))
+                start_line = out.get("startLine", out.get("start_line"))
+                if total_lines is not None and end_line is not None:
+                    try:
+                        out["truncated"] = int(end_line) < int(total_lines)
+                    except (TypeError, ValueError):
+                        out.setdefault("truncated", False)
+                    if out.get("truncated"):
+                        try:
+                            out["next_offset"] = int(end_line) + 1
+                        except (TypeError, ValueError):
+                            pass
+                else:
+                    out.setdefault("truncated", out.get("truncated", False))
+                if "original_length" not in out:
+                    if total_lines is not None:
+                        out["original_length"] = total_lines
+                    elif "total_chars" in out:
+                        out["original_length"] = out.get("total_chars")
+                if "truncated" not in out:
+                    out["truncated"] = False
+                return _res(out, r.get("success", False))
+            return _res(r, r.get("success", False) if isinstance(r, dict) else False)
 
         elif name == "enrich":
             query = str(arguments.get("query", ""))
